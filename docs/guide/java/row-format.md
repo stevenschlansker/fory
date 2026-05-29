@@ -297,6 +297,21 @@ evolve combines their versions the same way. Retiring an entry from a bean's `Hi
 once you no longer read payloads from that range stops the reader from accepting those payloads; it
 is purely a read-side decision, and the writer always uses the current schema.
 
+With `@ForyGenerate(evolution = true)`, every combination is materialised as a class file at build
+time instead of compiled on first decode, so the cross-product becomes the full set of generated
+classes. Retiring `History` entries you no longer read bounds that set.
+
+### GraalVM native image
+
+The runtime evolution path uses Janino to compile a projection codec on the first decode of a
+non-current peer hash, and native-image builds have no Janino on the image classpath, so a peer-hash
+miss fails at runtime. Native-image consumers of `withSchemaEvolution()` must precompile every
+projection combination at build time with `@ForyGenerate(evolution = true)`. With every combination
+materialised as a class file, the runtime stable-name probe finds the projection codec without
+invoking Janino. Same-version round-trips (writer schema hash equals the reader's current hash)
+never reach Janino even without precompilation; only a peer that wrote against a different schema
+version does.
+
 ## Related Topics
 
 - [Xlang Serialization](xlang-serialization.md) - xlang mode

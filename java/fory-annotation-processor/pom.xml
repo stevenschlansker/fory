@@ -42,11 +42,15 @@
   </properties>
 
   <dependencies>
+    <!-- fory-format pulls in fory-core transitively; both are needed at processor time to invoke
+         the row-codec builders that emit the generated codec source. The @ForyStruct processor
+         (ForyStructProcessor) does not need fory-core at compile time and used to keep it at test
+         scope, but @ForyGenerate codegen requires actual builder invocations so the dependency is
+         now compile-scope. -->
     <dependency>
       <groupId>org.apache.fory</groupId>
-      <artifactId>fory-core</artifactId>
+      <artifactId>fory-format</artifactId>
       <version>${project.version}</version>
-      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.testng</groupId>
@@ -62,6 +66,20 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
           <proc>none</proc>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!--
+              The processor refuses to run if the generated-class unique-id suffix is enabled,
+              because it cannot reproduce the runtime suffix at build time. Tests must run with
+              the suffix disabled to mirror how callers are expected to configure javac.
+          -->
+          <systemPropertyVariables>
+            <fory.enable_fory_generated_class_unique_id>false</fory.enable_fory_generated_class_unique_id>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
     </plugins>
