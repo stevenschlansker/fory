@@ -20,7 +20,6 @@
 package org.apache.fory.format.encoder;
 
 import java.lang.invoke.MethodHandle;
-import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import org.apache.fory.Fory;
@@ -96,21 +95,15 @@ public class RowCodecBuilder<T> extends BaseCodecBuilder<RowCodecBuilder<T>> {
     final Function<BaseBinaryRowWriter, GeneratedRowEncoder> currentFactory =
         rowEncoderFactory(currentSchema);
     // Index of hash → deferred projection source for each non-current combination of
-    // (outer-version, inner-versions). Building it compiles nothing: a combination's codec class is
-    // generated only the first time a payload with that hash is decoded. The suffix encodes the
-    // combination so distinct cross-product entries get distinct generated classes; the nested-bean
-    // version map directs the projection codec to embed the right inner projection class.
-    //
-    // Keyed by the raw strict hash straight from SchemaHistory, which already proves these hashes
-    // are unique across versions() and distinct from the current schema (its hashToSignature guard
-    // throws on a real collision). No builder-side collision check is needed here, unlike the map
-    // codec, whose key is a combined (key, value) hash computed outside SchemaHistory.
+    // (outer-version, inner-versions), from the shared enumeration so the runtime dispatch keys and
+    // the precompiler's emitted class names come from one deriver. Building it compiles nothing: a
+    // combination's codec class is generated only the first time a payload with that hash is
+    // decoded. Keyed by the strict hash, which SchemaHistory already proves is unique across
+    // versions() and distinct from the current schema, so no builder-side collision check is needed
+    // here (unlike the map codec's combined (key, value) hash).
     final LongMap<BinaryRowEncoder.ProjectionSource> projectionSources = new LongMap<>();
-    for (SchemaHistory.VersionedSchema vs : history.versions()) {
-      if (vs == currentVersion) {
-        continue;
-      }
-      projectionSources.put(vs.strictHash(), new ProjectionSource(beanClass, codecFormat, vs));
+    for (ProjectionVariant.Row variant : ProjectionVariants.forRow(beanClass, codecFormat)) {
+      projectionSources.put(variant.hash(), new ProjectionSource(variant));
     }
 
     final long currentHash = currentVersion.strictHash();
@@ -150,31 +143,24 @@ public class RowCodecBuilder<T> extends BaseCodecBuilder<RowCodecBuilder<T>> {
    * compile relies on the shared code generator's own memoization rather than local locking.
    */
   private static final class ProjectionSource implements BinaryRowEncoder.ProjectionSource {
-    private final Class<?> beanClass;
-    private final Encoding codecFormat;
-    private final SchemaHistory.VersionedSchema version;
+    private final ProjectionVariant.Row variant;
 
-    ProjectionSource(
-        Class<?> beanClass, Encoding codecFormat, SchemaHistory.VersionedSchema version) {
-      this.beanClass = beanClass;
-      this.codecFormat = codecFormat;
-      this.version = version;
+    ProjectionSource(ProjectionVariant.Row variant) {
+      this.variant = variant;
     }
 
     @Override
     public BinaryRowEncoder.ProjectionCodec compile(BaseBinaryRowWriter writer, Fory fory) {
-      Schema historicalSchema = version.schema();
-      String suffix = ProjectionRouting.projectionSuffix(version);
-      Map<Class<?>, String> nestedSuffixes =
-          ProjectionRouting.nestedSuffixesFor(version, codecFormat);
+      Encoding codecFormat = variant.encoding();
+      Schema historicalSchema = variant.historicalSchema();
       Class<?> projectionClass =
           Encoders.loadOrGenProjectionRowCodecClass(
-              beanClass,
+              variant.beanClass(),
               codecFormat,
               historicalSchema,
-              version.liveFieldNames(),
-              suffix,
-              nestedSuffixes);
+              variant.liveFieldNames(),
+              variant.suffix(),
+              variant.nestedSuffixes());
       MethodHandle ctor = Encoders.constructorHandleFor(projectionClass, GeneratedRowEncoder.class);
       // The RowFactory depends only on the historical schema and codec format, so build it here
       // alongside the codec the first time this version is decoded.

@@ -322,6 +322,11 @@ public class Encoders {
     if (classes.isEmpty()) {
       return null;
     }
+    String stableName = stableQualifiedCodecName(beanClass, "", codecFactory);
+    Class<?> preCompiled = tryForName(stableName, GeneratedRowEncoder.class);
+    if (preCompiled != null) {
+      return preCompiled;
+    }
     LOG.info("Create codec for classes {}", classes);
     CompileUnit[] compileUnits =
         classes.stream()
@@ -339,6 +344,50 @@ public class Encoders {
   }
 
   /**
+   * Compute the qualified name of the build-time pre-compiled codec class for {@code beanClass}, if
+   * any. The name has no class-loader / class hashcode suffix (those are runtime-only
+   * disambiguators), so the annotation processor and runtime agree on it. {@code prefix} is the
+   * inner naming token used by array and map codecs to disambiguate their kind from the row codec
+   * for the same bean.
+   */
+  static String stableQualifiedCodecName(Class<?> beanClass, String prefix, Encoding codecFactory) {
+    String suffix = codecFactory == CompactCodecFormat.INSTANCE ? "CompactCodec" : "RowCodec";
+    String simple =
+        (org.apache.fory.reflect.ReflectionUtils.getClassNameWithoutPackage(beanClass)
+                + prefix
+                + suffix)
+            .replace("$", "_");
+    return CodeGenerator.getPackage(beanClass) + "." + simple;
+  }
+
+  /**
+   * Probe for a precompiled codec class. Returns the class only if it implements {@code
+   * expectedGenerated} (one of the {@code Generated*Encoder} interfaces), so a user class that
+   * happens to occupy the stable name does not get wired into a codec slot — the caller falls
+   * through to runtime codegen instead.
+   */
+  private static Class<?> tryForName(String qualifiedName, Class<?> expectedGenerated) {
+    ClassLoader[] loaders = {
+      Thread.currentThread().getContextClassLoader(), Encoders.class.getClassLoader()
+    };
+    for (ClassLoader cl : loaders) {
+      if (cl == null) {
+        continue;
+      }
+      try {
+        Class<?> cls = Class.forName(qualifiedName, false, cl);
+        if (expectedGenerated.isAssignableFrom(cls)) {
+          return cls;
+        }
+        return null;
+      } catch (ClassNotFoundException ignored) {
+        // try the next loader
+      }
+    }
+    return null;
+  }
+
+  /**
    * Compile and load a projection codec class for one historical version of {@code beanClass}. The
    * current-version codec class is loaded separately by {@link #loadOrGenRowCodecClass}; this is
    * used by schema-evolution code paths to materialize a decoder for each older version. The {@code
@@ -352,6 +401,13 @@ public class Encoders {
       Set<String> liveNames,
       String classSuffix,
       Map<Class<?>, String> nestedSuffixes) {
+    Class<?> preCompiled =
+        tryForName(
+            stableQualifiedCodecName(beanClass, "", codecFactory) + classSuffix,
+            GeneratedRowEncoder.class);
+    if (preCompiled != null) {
+      return preCompiled;
+    }
     final RowEncoderBuilder codecBuilder =
         codecFactory.newProjectionRowEncoder(
             TypeRef.of(beanClass), historicalSchema, liveNames, classSuffix, nestedSuffixes);
@@ -369,6 +425,12 @@ public class Encoders {
     Class<?> cls = getRawType(elementType);
     // class name prefix
     String prefix = TypeInference.inferTypeName(arrayCls);
+    Class<?> preCompiled =
+        tryForName(
+            stableQualifiedCodecName(cls, prefix, codecFactory), GeneratedArrayEncoder.class);
+    if (preCompiled != null) {
+      return preCompiled;
+    }
 
     ArrayEncoderBuilder codecBuilder = codecFactory.newArrayEncoder(arrayCls, elementType);
     CompileUnit compileUnit =
@@ -388,6 +450,13 @@ public class Encoders {
       Map<Class<?>, String> nestedSuffixes) {
     Class<?> cls = getRawType(elementType);
     String prefix = TypeInference.inferTypeName(arrayCls);
+    Class<?> preCompiled =
+        tryForName(
+            stableQualifiedCodecName(cls, prefix, codecFactory) + classSuffix,
+            GeneratedArrayEncoder.class);
+    if (preCompiled != null) {
+      return preCompiled;
+    }
     ArrayEncoderBuilder codecBuilder =
         codecFactory.newProjectionArrayEncoder(arrayCls, elementType, classSuffix, nestedSuffixes);
     CompileUnit compileUnit =
@@ -420,6 +489,11 @@ public class Encoders {
     }
     // class name prefix
     String prefix = TypeInference.inferTypeName(mapCls);
+    Class<?> preCompiled =
+        tryForName(stableQualifiedCodecName(cls, prefix, codecFactory), GeneratedMapEncoder.class);
+    if (preCompiled != null) {
+      return preCompiled;
+    }
 
     MapEncoderBuilder codecBuilder = codecFactory.newMapEncoder(mapCls, beanToken);
     CompileUnit compileUnit =
@@ -449,10 +523,20 @@ public class Encoders {
             keyCodecSuffix,
             valNestedSuffixes,
             keyNestedSuffixes);
+    // The map's class-name suffix is a composite of the key and value suffixes, so derive it from
+    // the builder to keep the precompiled-class probe byte-identical to the name codegen emits.
+    String classSuffix = codecBuilder.mapClassSuffix();
+    Class<?> preCompiled =
+        tryForName(
+            stableQualifiedCodecName(cls, prefix, codecFactory) + classSuffix,
+            GeneratedMapEncoder.class);
+    if (preCompiled != null) {
+      return preCompiled;
+    }
     CompileUnit compileUnit =
         new CompileUnit(
             CodeGenerator.getPackage(cls),
-            codecBuilder.codecClassName(cls, prefix) + codecBuilder.mapClassSuffix(),
+            codecBuilder.codecClassName(cls, prefix) + classSuffix,
             codecBuilder::genCode);
     return loadCls(compileUnit);
   }

@@ -32,6 +32,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import org.apache.fory.annotation.Internal;
 import org.apache.fory.builder.AccessorHelper;
 import org.apache.fory.builder.Generated;
 import org.apache.fory.collection.Collections;
@@ -79,20 +80,59 @@ public class CodeGenerator {
 
   // use this package when bean class name starts with java.
   private static final String FALLBACK_PACKAGE = Generated.class.getPackage().getName();
-  public static final boolean ENABLE_FORY_GENERATED_CLASS_UNIQUE_ID;
   private static int maxPoolSize = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
   private static ExecutorService compilationExecutorService;
 
-  static {
-    boolean useUniqueId = StringUtils.isBlank(CodeGenerator.getCodeDir());
-    String flagValue =
-        System.getProperty(
-            "fory.enable_fory_generated_class_unique_id",
-            System.getenv("ENABLE_FORY_GENERATED_CLASS_UNIQUE_ID"));
-    if (flagValue != null) {
-      useUniqueId = "true".equals(flagValue);
+  /**
+   * True if generated class names should be suffixed with a classloader+class hashcode to keep them
+   * unique across reloads. Resolved on first call rather than at class-init time so that callers
+   * like the build-time annotation processor can set {@code
+   * fory.enable_fory_generated_class_unique_id} before the value is observed, without having to
+   * order their own static initializers ahead of this class's.
+   */
+  @Internal
+  public static boolean isClassUniqueIdEnabled() {
+    return UniqueIdFlag.value();
+  }
+
+  /**
+   * Override the unique-id flag at runtime. Intended for build-time tooling that needs stable
+   * generated class names regardless of the JVM-startup property; not part of the user-facing API.
+   */
+  @Internal
+  public static void setClassUniqueIdEnabled(boolean enabled) {
+    UniqueIdFlag.set(enabled);
+  }
+
+  private static final class UniqueIdFlag {
+    private static volatile Boolean cached;
+
+    static boolean value() {
+      Boolean local = cached;
+      if (local != null) {
+        return local;
+      }
+      synchronized (UniqueIdFlag.class) {
+        local = cached;
+        if (local != null) {
+          return local;
+        }
+        boolean useUniqueId = StringUtils.isBlank(CodeGenerator.getCodeDir());
+        String flagValue =
+            System.getProperty(
+                "fory.enable_fory_generated_class_unique_id",
+                System.getenv("ENABLE_FORY_GENERATED_CLASS_UNIQUE_ID"));
+        if (flagValue != null) {
+          useUniqueId = "true".equals(flagValue);
+        }
+        cached = useUniqueId;
+        return useUniqueId;
+      }
     }
-    ENABLE_FORY_GENERATED_CLASS_UNIQUE_ID = useUniqueId;
+
+    static synchronized void set(boolean enabled) {
+      cached = enabled;
+    }
   }
 
   private ClassLoader classLoader;
@@ -359,7 +399,7 @@ public class CodeGenerator {
   }
 
   public static String getClassUniqueId(Class<?> cls) {
-    if (!ENABLE_FORY_GENERATED_CLASS_UNIQUE_ID) {
+    if (!isClassUniqueIdEnabled()) {
       return "";
     }
     // classLoader will be null for jdk classes.
