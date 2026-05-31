@@ -54,8 +54,8 @@ import java.lang.annotation.Target;
  * when the processor runs (i.e. produced by an earlier compilation step or supplied by a dependency
  * jar). They cannot live in the same compilation unit as the {@code @ForyGenerate} interface.
  *
- * <p>Declare an {@code INSTANCE} constant on the interface that resolves through
- * {@code Encoders.factory(...)} so callers do not have to know the generated class name:
+ * <p>Declare an {@code INSTANCE} constant on the interface that resolves through {@code
+ * Encoders.factory(...)} so callers do not have to know the generated class name:
  *
  * <pre>{@code
  * @ForyGenerate(format = RowFormat.COMPACT)

@@ -93,6 +93,10 @@ ordinal, accepting Java lower-camel field names for bean-derived schemas, valida
 row-format type, and storing the resolved ordinal. Later calls such as `f1.get(binaryRow)` go
 straight to the ordinal row getter without another schema map lookup or typed handle construction.
 
+Register any custom codecs (via `@ForyCustomCodec` or `@ForyCustomCollection`) before constructing
+the first encoder for a bean that references them. Generated row codecs cache the resolved codec
+in a `static final` field, so registrations made after a codec class is loaded are not picked up.
+
 ## Key Benefits
 
 | Feature                 | Description                                            |

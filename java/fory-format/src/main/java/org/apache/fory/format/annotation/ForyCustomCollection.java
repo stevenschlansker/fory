@@ -27,13 +27,13 @@ import java.lang.annotation.Target;
 /**
  * Marks an implementation of {@link org.apache.fory.format.encoder.CustomCollectionFactory} for
  * automatic registration. The {@code @ForyGenerate} annotation processor discovers every class
- * carrying this annotation, registers it on the build-time custom-collection registry so
- * generated codecs use the factory for instantiation, and emits the corresponding
- * {@code Encoders.registerCustomCollectionFactory(...)} call into each generated factory's static
+ * carrying this annotation, registers it on the build-time custom-collection registry so generated
+ * codecs use the factory for instantiation, and emits the corresponding {@code
+ * Encoders.registerCustomCollectionFactory(...)} call into each generated factory's static
  * initializer.
  *
- * <p>The factory class must have a public no-arg constructor. The collection and element types
- * are read from the factory's {@code CustomCollectionFactory<E, C>} type parameters.
+ * <p>The factory class must have a public no-arg constructor. The collection and element types are
+ * read from the factory's {@code CustomCollectionFactory<E, C>} type parameters.
  *
  * <p>Example:
  *

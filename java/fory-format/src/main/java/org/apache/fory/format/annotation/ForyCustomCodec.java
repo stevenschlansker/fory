@@ -32,8 +32,8 @@ import java.lang.annotation.Target;
  * generated factory's static initializer.
  *
  * <p>The codec class must have a public no-arg constructor. The field type the codec handles is
- * read from the codec's {@code CustomCodec<T, E>} type parameter; only {@code beanType} is
- * declared on the annotation, defaulting to {@code Object.class} (global scope).
+ * read from the codec's {@code CustomCodec<T, E>} type parameter; only {@code beanType} is declared
+ * on the annotation, defaulting to {@code Object.class} (global scope).
  *
  * <p>Example:
  *
