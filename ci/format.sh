@@ -24,12 +24,6 @@ install_nodejs() {
   npm -v
 }
 
-# Check for ruff
-if ! [ -x "$(command -v ruff)" ]; then
-    echo "ruff not installed. Install with: pip install ruff"
-    exit 1
-fi
-
 # this stops git rev-parse from failing if we run this from the .git directory
 builtin cd "$(dirname "${BASH_SOURCE:-$0}")"
 
@@ -50,48 +44,74 @@ else
     echo "INFO: Fory uses shellcheck for shell scripts, which is not installed. You may install shellcheck=$SHELLCHECK_VERSION_REQUIRED with your system package manager."
 fi
 
-if command -v clang-format >/dev/null; then
-  CLANG_FORMAT_OUTPUT=$(clang-format --version)
-  echo "Full clang-format version output: $CLANG_FORMAT_OUTPUT"
-  # Extract version number - handles both "clang-format version X.Y.Z" and "Ubuntu clang-format version X.Y.Z"
-  # Use sed instead of grep -P for macOS compatibility
-  CLANG_FORMAT_VERSION=$(echo "$CLANG_FORMAT_OUTPUT" | sed -n 's/.*\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' | head -n1)
-  echo "clang-format installed: $CLANG_FORMAT_VERSION"
-  if [ "$CLANG_FORMAT_VERSION" != "18.1.8" ]; then
-    echo "WARNING: Fory uses clang-format 18.1.8, You currently are using $CLANG_FORMAT_VERSION."
-    echo "Installing clang-format 18.1.8..."
-    pip install clang-format==18.1.8
-    # Refresh command hash to find the newly installed version
-    hash -r
-    # Update PATH to prioritize pip-installed binaries
-    PYTHON_SCRIPTS_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('scripts'))")
-    export PATH="$PYTHON_SCRIPTS_DIR:$PATH"
-    # Update the version after installation
-    CLANG_FORMAT_OUTPUT=$(clang-format --version)
-    echo "Full clang-format version output after install: $CLANG_FORMAT_OUTPUT"
-    CLANG_FORMAT_VERSION=$(echo "$CLANG_FORMAT_OUTPUT" | sed -n 's/.*\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' | head -n1)
-    echo "clang-format updated to: $CLANG_FORMAT_VERSION"
-  fi
-else
-    echo "WARNING: clang-format is not installed!"
-    echo "Installing clang-format 18.1.8..."
-    pip install clang-format==18.1.8
-    hash -r
-    PYTHON_SCRIPTS_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('scripts'))")
-    export PATH="$PYTHON_SCRIPTS_DIR:$PATH"
-fi
+# Install a Python package via whichever pip front-end is available. Bare `pip` is not on PATH
+# in many environments (Debian/Ubuntu, many CI containers) where only `pip3` or `python3 -m pip`
+# work; pick whichever exists rather than hard-failing.
+pip_install() {
+    if command -v pip >/dev/null; then
+        pip install "$@"
+    elif command -v pip3 >/dev/null; then
+        pip3 install "$@"
+    elif command -v python3 >/dev/null; then
+        python3 -m pip install "$@"
+    else
+        echo "ERROR: no pip / pip3 / python3 available to install $*" >&2
+        return 1
+    fi
+}
 
-if ! command -v node >/dev/null; then
-  echo "INFO: node is not installed, start to install it"
-  install_nodejs
-fi
+# Lazy ruff check: only Python formatting needs ruff, so skip the hard prerequisite when the
+# user is formatting another language. Callers that need ruff should run this guard first.
+require_ruff() {
+    if ! [ -x "$(command -v ruff)" ]; then
+        echo "ERROR: ruff is not installed. Install with: pip install ruff" >&2
+        return 1
+    fi
+}
 
-if [ ! -f "$ROOT/javascript/node_modules/.bin/eslint" ]; then
-  echo "eslint is not installed, start to install it."
-  pushd "$ROOT/javascript"
-  npm install
-  popd
-fi
+# Ensure clang-format 18.1.8 is on PATH. Only call this from C++ formatting paths.
+ensure_clang_format() {
+    local required="18.1.8"
+    local installed=""
+    if command -v clang-format >/dev/null; then
+        local out
+        out=$(clang-format --version)
+        echo "Full clang-format version output: $out"
+        # Match exactly one X.Y.Z run, anchored so a leading digit on a two-digit major
+        # ("18.1.8") is not stripped to "8.1.8".
+        installed=$(echo "$out" | sed -n 's/.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n1)
+        echo "clang-format installed: $installed"
+        if [ "$installed" = "$required" ]; then
+            return 0
+        fi
+        echo "WARNING: Fory uses clang-format $required, You currently are using $installed."
+    else
+        echo "WARNING: clang-format is not installed!"
+    fi
+    echo "Installing clang-format $required..."
+    pip_install "clang-format==$required" || return 1
+    hash -r
+    local scripts
+    scripts=$(python3 -c "import sysconfig; print(sysconfig.get_path('scripts'))")
+    export PATH="$scripts:$PATH"
+    if command -v clang-format >/dev/null; then
+        echo "Full clang-format version output after install: $(clang-format --version)"
+    fi
+}
+
+# Ensure node and the project's eslint are available. Only call this from JavaScript paths.
+ensure_node_and_eslint() {
+    if ! command -v node >/dev/null; then
+        echo "INFO: node is not installed, start to install it"
+        install_nodejs
+    fi
+    if [ ! -f "$ROOT/javascript/node_modules/.bin/eslint" ]; then
+        echo "eslint is not installed, start to install it."
+        pushd "$ROOT/javascript"
+        npm install
+        popd
+    fi
+}
 
 if command -v java >/dev/null; then
     echo "Java installed"
@@ -180,26 +200,18 @@ format_java() {
 }
 
 format_cpp() {
+    ensure_clang_format || exit 1
     echo "$(date)" "clang-format C++ files...."
-    if command -v clang-format >/dev/null; then
-      git ls-files -- '*.cc' '*.h' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
-      echo "$(date)" "C++ formatting done!"
-    else
-      echo "ERROR: clang-format is not installed!"
-      exit 1
-    fi
+    git ls-files -- '*.cc' '*.h' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
+    echo "$(date)" "C++ formatting done!"
 }
 
 format_python() {
+    require_ruff || exit 1
     echo "$(date)" "Ruff format Python files...."
-    if command -v ruff >/dev/null; then
-      git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs -P 10 ruff format
-      git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs ruff check --fix
-      echo "$(date)" "Python formatting done!"
-    else
-      echo "ERROR: ruff is not installed! Install with: pip install ruff"
-      exit 1
-    fi
+    git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs -P 10 ruff format
+    git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs ruff check --fix
+    echo "$(date)" "Python formatting done!"
 }
 
 format_go() {
@@ -245,7 +257,7 @@ format_all() {
     format_all_scripts "${@}"
 
     echo "$(date)" "clang-format...."
-    if command -v clang-format >/dev/null; then
+    if ensure_clang_format; then
       git ls-files -- '*.cc' '*.h' '*.proto' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
     fi
 
@@ -255,7 +267,7 @@ format_all() {
     fi
 
     echo "$(date)" "format javascript...."
-    if command -v node >/dev/null; then
+    if ensure_node_and_eslint; then
       pushd "$ROOT"
       git ls-files -- '*.ts' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 node ./javascript/node_modules/.bin/eslint
       popd
@@ -289,14 +301,15 @@ format_changed() {
     MERGEBASE="$(git merge-base origin/main HEAD)"
 
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.py' &>/dev/null; then
+        require_ruff || exit 1
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
             ruff format
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
             ruff check --fix
     fi
 
-    if which clang-format >/dev/null; then
-        if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.cc' '*.h' &>/dev/null; then
+    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.cc' '*.h' &>/dev/null; then
+        if ensure_clang_format; then
             git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.cc' '*.h' | xargs -P 5 \
                  clang-format -i
         fi
@@ -323,7 +336,7 @@ format_changed() {
         fi
     fi
 
-    if which node >/dev/null; then
+    if ensure_node_and_eslint; then
         pushd "$ROOT"
         if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.ts' &>/dev/null; then
             git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.ts' | xargs -P 5 \
