@@ -1671,7 +1671,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20.x
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
       - name: Check code style
+        # Swift formatting is enforced by the dedicated macOS Swift job; skip it
+        # here so the Linux lint job does not need swiftlint installed.
+        env:
+          FORMAT_SKIP_SWIFT: "1"
         run: python ./ci/run_ci.py format
 
   validate_fory_site_build:

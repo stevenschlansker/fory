@@ -22,7 +22,7 @@ from . import common
 def run():
     """Run format checking tasks."""
     logging.info("Install format tools")
-    common.exec_cmd("pip install ruff")
+    common.exec_cmd("bash ci/format.sh --install")
 
     logging.info("Executing format check")
     common.exec_cmd("bash ci/format.sh")

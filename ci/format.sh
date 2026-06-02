@@ -63,8 +63,11 @@ pip_install() {
 
 CLANG_FORMAT_VERSION_REQUIRED="18.1.8"
 
-# Tools are checked, never installed, on the format paths, so a plain run never
-# mutates the environment. `./format.sh --install` provisions them.
+# Every formatter is checked, never installed, on the format paths, so a plain
+# run never mutates the environment; a missing tool fails with its fix command.
+# `./format.sh --install` provisions the pip/npm tools (clang-format, ruff,
+# node/eslint, prettier). Maven, Go, .NET, and swiftlint are expected from the
+# system or CI runner and are only verified here, not installed.
 
 require_ruff() {
     if ! [ -x "$(command -v ruff)" ]; then
@@ -120,6 +123,36 @@ require_prettier() {
     fi
 }
 
+require_maven() {
+    if ! command -v mvn >/dev/null; then
+        echo "ERROR: mvn is not installed. Install Maven from https://maven.apache.org/." >&2
+        return 1
+    fi
+}
+
+require_gofmt() {
+    if ! command -v gofmt >/dev/null; then
+        echo "ERROR: gofmt is not installed. Install Go from https://go.dev/." >&2
+        return 1
+    fi
+}
+
+require_dotnet() {
+    if ! command -v dotnet >/dev/null; then
+        echo "ERROR: dotnet is not installed. Install the .NET SDK from" \
+             "https://dotnet.microsoft.com/download." >&2
+        return 1
+    fi
+}
+
+require_swiftlint() {
+    if ! command -v swiftlint >/dev/null; then
+        echo "ERROR: swiftlint is not installed. Install it with 'brew install swiftlint'" \
+             "or from https://github.com/realm/SwiftLint." >&2
+        return 1
+    fi
+}
+
 # Install the formatter tools. Only reached via `./format.sh --install`.
 # Each step is validated under set -e so a broken install can't pass silently.
 install_deps() {
@@ -152,13 +185,6 @@ install_deps() {
 
     echo "Formatter tools installed."
 }
-
-if command -v java >/dev/null; then
-    echo "Java installed"
-    java -version
-else
-    echo "WARNING:java is not installed, skip format java files!"
-fi
 
 SHELLCHECK_FLAGS=(
   --exclude=1090  # "Can't follow non-constant source. Use a directive to specify location."
@@ -220,25 +246,21 @@ format_all_scripts() {
 }
 
 format_java() {
-    if command -v mvn >/dev/null ; then
-      echo "Maven installed"
-      cd "$ROOT/java"
-      mvn -T10 --no-transfer-progress spotless:apply
-      mvn -T10 --no-transfer-progress checkstyle:check
-      mvn -T10 --no-transfer-progress install -DskipTests
-      cd "$ROOT/benchmarks/java"
-      mvn -T10 --no-transfer-progress spotless:apply
-      cd "$ROOT/integration_tests"
-      dirs=("graalvm_tests" "jdk_compatibility_tests")
-      for d in "${dirs[@]}" ; do
-        pushd "$d"
-          mvn -T10 --no-transfer-progress spotless:apply
-        popd
-      done
-      cd "$ROOT"
-    else
-      echo "Maven not installed, skip java check"
-    fi
+    require_maven || exit 1
+    cd "$ROOT/java"
+    mvn -T10 --no-transfer-progress spotless:apply
+    mvn -T10 --no-transfer-progress checkstyle:check
+    mvn -T10 --no-transfer-progress install -DskipTests
+    cd "$ROOT/benchmarks/java"
+    mvn -T10 --no-transfer-progress spotless:apply
+    cd "$ROOT/integration_tests"
+    dirs=("graalvm_tests" "jdk_compatibility_tests")
+    for d in "${dirs[@]}" ; do
+      pushd "$d"
+        mvn -T10 --no-transfer-progress spotless:apply
+      popd
+    done
+    cd "$ROOT"
 }
 
 format_cpp() {
@@ -257,41 +279,30 @@ format_python() {
 }
 
 format_go() {
+    require_gofmt || exit 1
     echo "$(date)" "gofmt format Go files...."
-    if command -v gofmt >/dev/null; then
-      git ls-files -- '*.go' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 gofmt -w
-      echo "$(date)" "Go formatting done!"
-    else
-      echo "ERROR: gofmt is not installed! Install Go from https://go.dev/"
-      exit 1
-    fi
+    git ls-files -- '*.go' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 gofmt -w
+    echo "$(date)" "Go formatting done!"
 }
 
 format_csharp() {
+    require_dotnet || exit 1
     echo "$(date)" "dotnet format C# files...."
-    if command -v dotnet >/dev/null; then
-      pushd "$ROOT/csharp"
-      dotnet format Fory.sln \
-        --exclude src/Fory.Generator/AnalyzerReleases.Shipped.md \
-        --exclude src/Fory.Generator/AnalyzerReleases.Unshipped.md
-      popd
-      echo "$(date)" "C# formatting done!"
-    else
-      echo "ERROR: dotnet is not installed! Install .NET SDK from https://dotnet.microsoft.com/download"
-      exit 1
-    fi
+    pushd "$ROOT/csharp"
+    dotnet format Fory.sln \
+      --exclude src/Fory.Generator/AnalyzerReleases.Shipped.md \
+      --exclude src/Fory.Generator/AnalyzerReleases.Unshipped.md
+    popd
+    echo "$(date)" "C# formatting done!"
 }
 
 format_swift() {
+    require_swiftlint || exit 1
     echo "$(date)" "SwiftLint check Swift files...."
-    if command -v swiftlint >/dev/null; then
-      pushd "$ROOT/swift"
-      swiftlint lint --config .swiftlint.yml
-      popd
-      echo "$(date)" "SwiftLint done!"
-    else
-      echo "WARNING: swiftlint is not installed, skip swift lint check"
-    fi
+    pushd "$ROOT/swift"
+    swiftlint lint --config .swiftlint.yml
+    popd
+    echo "$(date)" "SwiftLint done!"
 }
 
 # Format all files, and print the diff to stdout for travis.
@@ -303,9 +314,7 @@ format_all() {
     git ls-files -- '*.cc' '*.h' '*.proto' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
 
     echo "$(date)" "format java...."
-    if command -v java >/dev/null; then
-      format_java
-    fi
+    format_java
 
     echo "$(date)" "format javascript...."
     require_node_and_eslint || exit 1
@@ -314,17 +323,17 @@ format_all() {
     popd
 
     echo "$(date)" "format go...."
-    if command -v go >/dev/null; then
-      git ls-files -- '*.go' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 gofmt -w
-    fi
+    format_go
 
     echo "$(date)" "format csharp...."
-    if command -v dotnet >/dev/null; then
-      format_csharp
-    fi
+    format_csharp
 
-    echo "$(date)" "lint swift...."
-    format_swift
+    # The dedicated macOS Swift CI job owns swiftlint; FORMAT_SKIP_SWIFT=1 lets the
+    # Linux lint job skip it (and the brew-on-Linux install), same as format_changed.
+    if [ -z "${FORMAT_SKIP_SWIFT-}" ]; then
+        echo "$(date)" "lint swift...."
+        format_swift
+    fi
 
     echo "$(date)" "done!"
 }
@@ -354,25 +363,18 @@ format_changed() {
              clang-format -i
     fi
 
-    if command -v java >/dev/null; then
-       if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.java' &>/dev/null; then
-         format_java
-       fi
+    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.java' &>/dev/null; then
+        format_java
     fi
 
-    if which go >/dev/null; then
-        if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.go' &>/dev/null; then
-            git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.go' | xargs -P 5 \
-                  gofmt -w
-        fi
+    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.go' &>/dev/null; then
+        require_gofmt || exit 1
+        git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.go' | xargs -P 5 \
+              gofmt -w
     fi
 
-    if command -v dotnet >/dev/null; then
-        local csharp_changed
-        csharp_changed="$(git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- csharp || true)"
-        if [ -n "$csharp_changed" ]; then
-            format_csharp
-        fi
+    if [ -n "$(git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- csharp || true)" ]; then
+        format_csharp
     fi
 
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.ts' &>/dev/null; then
@@ -400,7 +402,10 @@ format_changed() {
         popd
     fi
 
-    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- 'swift' &>/dev/null; then
+    # The dedicated macOS Swift CI job owns swiftlint; the Linux lint job sets
+    # FORMAT_SKIP_SWIFT=1 to avoid a duplicate run (and a brew-on-Linux install).
+    if [ -z "${FORMAT_SKIP_SWIFT-}" ] \
+        && ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- 'swift' &>/dev/null; then
         format_swift
     fi
 }
