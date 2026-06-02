@@ -2,8 +2,9 @@
 
 # This script is derived from https://github.com/ray-project/ray/blob/5ce25a57a0949673d17f3a8784f05b2d65290524/ci/lint/format.sh.
 
-# Ruff formatter (if installed). This script formats all changed files from the last mergebase.
-# You are encouraged to run this locally before pushing changes for review.
+# Formats changed files (or all files with --all). Run this locally before pushing.
+# Required formatters are checked, not installed; a missing one fails with the fix
+# command. Run `./format.sh --install` to provision them.
 
 # Cause the script to exit if a single command fails
 set -euox pipefail
@@ -23,12 +24,6 @@ install_nodejs() {
   node -v
   npm -v
 }
-
-# Check for ruff
-if ! [ -x "$(command -v ruff)" ]; then
-    echo "ruff not installed. Install with: pip install ruff"
-    exit 1
-fi
 
 # this stops git rev-parse from failing if we run this from the .git directory
 builtin cd "$(dirname "${BASH_SOURCE:-$0}")"
@@ -50,48 +45,113 @@ else
     echo "INFO: Fory uses shellcheck for shell scripts, which is not installed. You may install shellcheck=$SHELLCHECK_VERSION_REQUIRED with your system package manager."
 fi
 
-if command -v clang-format >/dev/null; then
-  CLANG_FORMAT_OUTPUT=$(clang-format --version)
-  echo "Full clang-format version output: $CLANG_FORMAT_OUTPUT"
-  # Extract version number - handles both "clang-format version X.Y.Z" and "Ubuntu clang-format version X.Y.Z"
-  # Use sed instead of grep -P for macOS compatibility
-  CLANG_FORMAT_VERSION=$(echo "$CLANG_FORMAT_OUTPUT" | sed -n 's/.*\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' | head -n1)
-  echo "clang-format installed: $CLANG_FORMAT_VERSION"
-  if [ "$CLANG_FORMAT_VERSION" != "18.1.8" ]; then
-    echo "WARNING: Fory uses clang-format 18.1.8, You currently are using $CLANG_FORMAT_VERSION."
-    echo "Installing clang-format 18.1.8..."
-    pip install clang-format==18.1.8
-    # Refresh command hash to find the newly installed version
-    hash -r
-    # Update PATH to prioritize pip-installed binaries
-    PYTHON_SCRIPTS_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('scripts'))")
-    export PATH="$PYTHON_SCRIPTS_DIR:$PATH"
-    # Update the version after installation
-    CLANG_FORMAT_OUTPUT=$(clang-format --version)
-    echo "Full clang-format version output after install: $CLANG_FORMAT_OUTPUT"
-    CLANG_FORMAT_VERSION=$(echo "$CLANG_FORMAT_OUTPUT" | sed -n 's/.*\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' | head -n1)
-    echo "clang-format updated to: $CLANG_FORMAT_VERSION"
-  fi
-else
-    echo "WARNING: clang-format is not installed!"
-    echo "Installing clang-format 18.1.8..."
-    pip install clang-format==18.1.8
-    hash -r
-    PYTHON_SCRIPTS_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('scripts'))")
-    export PATH="$PYTHON_SCRIPTS_DIR:$PATH"
-fi
+# Install a Python package via whichever pip front-end is available. Bare `pip` is not on PATH
+# in many environments (Debian/Ubuntu, many CI containers) where only `pip3` or `python3 -m pip`
+# work; pick whichever exists rather than hard-failing.
+pip_install() {
+    if command -v pip >/dev/null; then
+        pip install "$@"
+    elif command -v pip3 >/dev/null; then
+        pip3 install "$@"
+    elif command -v python3 >/dev/null; then
+        python3 -m pip install "$@"
+    else
+        echo "ERROR: no pip / pip3 / python3 available to install $*" >&2
+        return 1
+    fi
+}
 
-if ! command -v node >/dev/null; then
-  echo "INFO: node is not installed, start to install it"
-  install_nodejs
-fi
+CLANG_FORMAT_VERSION_REQUIRED="18.1.8"
 
-if [ ! -f "$ROOT/javascript/node_modules/.bin/eslint" ]; then
-  echo "eslint is not installed, start to install it."
-  pushd "$ROOT/javascript"
-  npm install
-  popd
-fi
+# Tools are checked, never installed, on the format paths, so a plain run never
+# mutates the environment. `./format.sh --install` provisions them.
+
+require_ruff() {
+    if ! [ -x "$(command -v ruff)" ]; then
+        echo "ERROR: ruff is not installed. Install with: pip install ruff" \
+             "(or run ./format.sh --install)." >&2
+        return 1
+    fi
+}
+
+# Extract the active clang-format X.Y.Z version. The [^0-9] anchor keeps a
+# two-digit major intact ("18.1.8", not "8.1.8") and skips vendor/build suffixes.
+clang_format_version() {
+    clang-format --version | sed -n 's/.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n1
+}
+
+require_clang_format() {
+    local required="$CLANG_FORMAT_VERSION_REQUIRED"
+    if ! command -v clang-format >/dev/null; then
+        echo "ERROR: clang-format is not installed. Install clang-format $required" \
+             "with: pip install clang-format==$required (or run ./format.sh --install)." >&2
+        return 1
+    fi
+    local installed
+    installed=$(clang_format_version)
+    if [ "$installed" != "$required" ]; then
+        echo "ERROR: Fory uses clang-format $required but $installed is active." \
+             "Install with: pip install clang-format==$required (or run ./format.sh --install)." >&2
+        return 1
+    fi
+}
+
+require_node() {
+    if ! command -v node >/dev/null; then
+        echo "ERROR: node is not installed. Run ./format.sh --install to install it." >&2
+        return 1
+    fi
+}
+
+require_node_and_eslint() {
+    require_node || return 1
+    if [ ! -f "$ROOT/javascript/node_modules/.bin/eslint" ]; then
+        echo "ERROR: eslint is not installed. Run ./format.sh --install, or" \
+             "'npm install' in $ROOT/javascript." >&2
+        return 1
+    fi
+}
+
+require_prettier() {
+    if ! command -v prettier >/dev/null; then
+        echo "ERROR: prettier is not installed. Run ./format.sh --install, or" \
+             "'npm install -g prettier'." >&2
+        return 1
+    fi
+}
+
+# Install the formatter tools. Only reached via `./format.sh --install`.
+# Each step is validated under set -e so a broken install can't pass silently.
+install_deps() {
+    echo "Installing clang-format $CLANG_FORMAT_VERSION_REQUIRED..."
+    pip_install "clang-format==$CLANG_FORMAT_VERSION_REQUIRED"
+    hash -r
+    local scripts
+    scripts=$(python3 -c "import sysconfig; print(sysconfig.get_path('scripts'))")
+    export PATH="$scripts:$PATH"
+    require_clang_format
+
+    echo "Installing ruff..."
+    pip_install ruff
+    hash -r
+    require_ruff
+
+    if ! command -v node >/dev/null; then
+        echo "INFO: node is not installed, start to install it"
+        install_nodejs
+    fi
+    require_node
+
+    echo "Installing eslint (npm install in javascript)..."
+    pushd "$ROOT/javascript"
+    npm install
+    popd
+
+    echo "Installing prettier globally..."
+    npm install -g prettier
+
+    echo "Formatter tools installed."
+}
 
 if command -v java >/dev/null; then
     echo "Java installed"
@@ -142,12 +202,14 @@ format_files() {
     done
 
     if [ 0 -lt "${#python_files[@]}" ]; then
+      require_ruff || exit 1
       ruff format "${python_files[@]}"
       ruff check --fix "${python_files[@]}"
     fi
 }
 
 format_all_scripts() {
+    require_ruff || exit 1
     echo "$(date)" "Ruff format...."
     git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs -P 10 \
       ruff format
@@ -180,26 +242,18 @@ format_java() {
 }
 
 format_cpp() {
+    require_clang_format || exit 1
     echo "$(date)" "clang-format C++ files...."
-    if command -v clang-format >/dev/null; then
-      git ls-files -- '*.cc' '*.h' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
-      echo "$(date)" "C++ formatting done!"
-    else
-      echo "ERROR: clang-format is not installed!"
-      exit 1
-    fi
+    git ls-files -- '*.cc' '*.h' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
+    echo "$(date)" "C++ formatting done!"
 }
 
 format_python() {
+    require_ruff || exit 1
     echo "$(date)" "Ruff format Python files...."
-    if command -v ruff >/dev/null; then
-      git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs -P 10 ruff format
-      git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs ruff check --fix
-      echo "$(date)" "Python formatting done!"
-    else
-      echo "ERROR: ruff is not installed! Install with: pip install ruff"
-      exit 1
-    fi
+    git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs -P 10 ruff format
+    git ls-files -- '*.py' "${GIT_LS_EXCLUDES[@]}" | xargs ruff check --fix
+    echo "$(date)" "Python formatting done!"
 }
 
 format_go() {
@@ -245,9 +299,8 @@ format_all() {
     format_all_scripts "${@}"
 
     echo "$(date)" "clang-format...."
-    if command -v clang-format >/dev/null; then
-      git ls-files -- '*.cc' '*.h' '*.proto' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
-    fi
+    require_clang_format || exit 1
+    git ls-files -- '*.cc' '*.h' '*.proto' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 clang-format -i
 
     echo "$(date)" "format java...."
     if command -v java >/dev/null; then
@@ -255,11 +308,10 @@ format_all() {
     fi
 
     echo "$(date)" "format javascript...."
-    if command -v node >/dev/null; then
-      pushd "$ROOT"
-      git ls-files -- '*.ts' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 node ./javascript/node_modules/.bin/eslint
-      popd
-    fi
+    require_node_and_eslint || exit 1
+    pushd "$ROOT"
+    git ls-files -- '*.ts' "${GIT_LS_EXCLUDES[@]}" | xargs -P 5 node ./javascript/node_modules/.bin/eslint
+    popd
 
     echo "$(date)" "format go...."
     if command -v go >/dev/null; then
@@ -289,17 +341,17 @@ format_changed() {
     MERGEBASE="$(git merge-base origin/main HEAD)"
 
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.py' &>/dev/null; then
+        require_ruff || exit 1
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
             ruff format
         git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.py' | xargs -P 5 \
             ruff check --fix
     fi
 
-    if which clang-format >/dev/null; then
-        if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.cc' '*.h' &>/dev/null; then
-            git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.cc' '*.h' | xargs -P 5 \
-                 clang-format -i
-        fi
+    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.cc' '*.h' &>/dev/null; then
+        require_clang_format || exit 1
+        git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.cc' '*.h' | xargs -P 5 \
+             clang-format -i
     fi
 
     if command -v java >/dev/null; then
@@ -323,14 +375,17 @@ format_changed() {
         fi
     fi
 
-    if which node >/dev/null; then
+    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.ts' &>/dev/null; then
+        require_node_and_eslint || exit 1
         pushd "$ROOT"
-        if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.ts' &>/dev/null; then
-            git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.ts' | xargs -P 5 \
-                  node ./javascript/node_modules/.bin/eslint
-        fi
-        # Install prettier globally
-        npm install -g prettier
+        git diff --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.ts' | xargs -P 5 \
+              node ./javascript/node_modules/.bin/eslint
+        popd
+    fi
+
+    if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.md' &>/dev/null; then
+        require_prettier || exit 1
+        pushd "$ROOT"
         # Fix markdown files except analyzer release tracking files.
         # Exclude symlinks (for example CLAUDE.md) because prettier fails on explicitly passed symlink paths.
         git ls-files -z -- '*.md' \
@@ -353,7 +408,10 @@ format_changed() {
 
 # This flag formats individual files. --files *must* be the first command line
 # arg to use this option.
-if [ "${1-}" == '--files' ]; then
+if [ "${1-}" == '--install' ]; then
+    install_deps
+    exit 0
+elif [ "${1-}" == '--files' ]; then
     format_files "${@:2}"
 # If `--all` or `--scripts` are passed, then any further arguments are ignored.
 # Format the entire python directory and other scripts.
@@ -376,8 +434,6 @@ elif [ "${1-}" == '--swift' ]; then
     format_swift
 elif [ "${1-}" == '--csharp' ]; then
     format_csharp
-elif [ "${1-}" == '--swift' ]; then
-    format_swift
 else
     # Add the origin remote if it doesn't exist
     if ! git remote -v | grep -q origin; then
