@@ -21,11 +21,13 @@ from . import common
 
 def run():
     """Run format checking tasks."""
-    logging.info("Install format tools")
-    common.exec_cmd("bash ci/format.sh --install")
-
-    logging.info("Executing format check")
-    common.exec_cmd("bash ci/format.sh")
+    logging.info("Install format tools and run format check")
+    # Install and check in a single process: install_deps exports the pip
+    # scripts dir (holding the exact clang-format version) onto PATH, and the
+    # check pass must run in that same process to see it. Two separate
+    # `format.sh` invocations would each get a fresh PATH and the check would
+    # fail to find the just-installed clang-format.
+    common.exec_cmd("bash ci/format.sh --install-and-check")
 
     common.cd_project_subdir("java")
     common.exec_cmd("mvn -T10 -B --no-transfer-progress spotless:check")

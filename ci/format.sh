@@ -388,17 +388,22 @@ format_changed() {
     if ! git diff --diff-filter=ACRM --quiet --exit-code "$MERGEBASE" -- '*.md' &>/dev/null; then
         require_prettier || exit 1
         pushd "$ROOT"
-        # Fix markdown files except analyzer release tracking files.
-        # Exclude symlinks (for example CLAUDE.md) because prettier fails on explicitly passed symlink paths.
-        git ls-files -z -- '*.md' \
+        # Fix only the changed markdown files, except analyzer release tracking
+        # files. Exclude symlinks (for example CLAUDE.md) because prettier fails
+        # on explicitly passed symlink paths. Collect into an array first so we
+        # skip prettier entirely when filtering leaves nothing (portable across
+        # GNU and BSD xargs, which differ on empty input).
+        local md_files=()
+        while IFS= read -r -d '' file; do
+            if [ ! -L "$file" ]; then
+                md_files+=("$file")
+            fi
+        done < <(git diff -z --name-only --diff-filter=ACRM "$MERGEBASE" -- '*.md' \
             ':!:csharp/src/Fory.Generator/AnalyzerReleases.Shipped.md' \
-            ':!:csharp/src/Fory.Generator/AnalyzerReleases.Unshipped.md' \
-            | while IFS= read -r -d '' file; do
-                if [ ! -L "$file" ]; then
-                    printf '%s\0' "$file"
-                fi
-            done \
-            | xargs -0 prettier --write
+            ':!:csharp/src/Fory.Generator/AnalyzerReleases.Unshipped.md')
+        if [ 0 -lt "${#md_files[@]}" ]; then
+            prettier --write "${md_files[@]}"
+        fi
         popd
     fi
 
@@ -411,11 +416,32 @@ format_changed() {
 }
 
 
+# Fetch main (so the merge-base diff works) and format only changed files. This
+# is the default entry point; `--install-and-check` reuses it after installing.
+fetch_and_format_changed() {
+    # Add the origin remote if it doesn't exist
+    if ! git remote -v | grep -q origin; then
+        git remote add 'origin' 'https://github.com/apache/fory.git'
+    fi
+
+    # use unshallow fetch for `git merge-base origin/main HEAD` to work.
+    # Only fetch main since that's the branch we're diffing against.
+    git fetch origin main --unshallow || true
+
+    echo "Format only the files that changed in last commit."
+    format_changed
+}
+
 # This flag formats individual files. --files *must* be the first command line
 # arg to use this option.
 if [ "${1-}" == '--install' ]; then
     install_deps
     exit 0
+elif [ "${1-}" == '--install-and-check' ]; then
+    # Install then check in one process so the PATH that install_deps exports
+    # (the pip scripts dir holding clang-format) is visible to the check pass.
+    install_deps
+    fetch_and_format_changed
 elif [ "${1-}" == '--files' ]; then
     format_files "${@:2}"
 # If `--all` or `--scripts` are passed, then any further arguments are ignored.
@@ -440,17 +466,7 @@ elif [ "${1-}" == '--swift' ]; then
 elif [ "${1-}" == '--csharp' ]; then
     format_csharp
 else
-    # Add the origin remote if it doesn't exist
-    if ! git remote -v | grep -q origin; then
-        git remote add 'origin' 'https://github.com/apache/fory.git'
-    fi
-
-    # use unshallow fetch for `git merge-base origin/main HEAD` to work.
-    # Only fetch main since that's the branch we're diffing against.
-    git fetch origin main --unshallow || true
-
-    echo "Format only the files that changed in last commit."
-    format_changed
+    fetch_and_format_changed
 fi
 
 # Ensure import ordering
