@@ -19,6 +19,7 @@
 
 package org.apache.fory.format.encoder;
 
+import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 import org.apache.fory.Fory;
 import org.apache.fory.format.row.binary.CompactBinaryRow;
@@ -38,8 +39,37 @@ public class BaseCodecBuilder<B extends BaseCodecBuilder<B>> {
   protected Encoding codecFormat = DefaultCodecFormat.INSTANCE;
   protected boolean schemaEvolution = false;
 
+  // The classloader that built this codec, captured at construction. A projection codec is compiled
+  // lazily on the first decode of a non-current peer hash, which can happen on a thread whose
+  // context classloader differs from the one that built the codec (and that holds the bean and any
+  // precompiled projection classes). Anchoring lazy resolution to this loader lets the precompiled
+  // class probe and any Janino fallback resolve the same classes the codec was built against.
+  private final ClassLoader buildTimeClassLoader;
+
   BaseCodecBuilder(final Schema schema) {
     this.schema = schema;
+    ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+    this.buildTimeClassLoader = tccl != null ? tccl : getClass().getClassLoader();
+  }
+
+  /**
+   * Run {@code compile} with the build-time classloader installed as the thread context
+   * classloader, restoring the previous one afterward. Projection codecs resolve lazily on first
+   * decode, possibly on a thread with a different context classloader; this pins resolution to the
+   * loader that built the codec so the precompiled-class probe and Janino see the right classes.
+   */
+  final <R> R withBuildTimeClassLoader(final Supplier<R> compile) {
+    Thread thread = Thread.currentThread();
+    ClassLoader prev = thread.getContextClassLoader();
+    if (prev == buildTimeClassLoader) {
+      return compile.get();
+    }
+    try {
+      thread.setContextClassLoader(buildTimeClassLoader);
+      return compile.get();
+    } finally {
+      thread.setContextClassLoader(prev);
+    }
   }
 
   /** Configure the Fory instance used for embedded binary serialized objects. */

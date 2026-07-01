@@ -130,6 +130,10 @@ public class ArrayCodecBuilder<C extends Collection<?>>
 
     @Override
     public BinaryArrayEncoder.ProjectionArrayCodec compile(Fory fory) {
+      return withBuildTimeClassLoader(() -> compileProjection(fory));
+    }
+
+    private BinaryArrayEncoder.ProjectionArrayCodec compileProjection(Fory fory) {
       // Generates the projection row codec for every nested versioned bean class in this
       // combination, both map key and value, so the array codec's references all resolve.
       Class<?> arrayClass =

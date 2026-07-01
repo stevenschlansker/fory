@@ -140,9 +140,11 @@ public class RowCodecBuilder<T> extends BaseCodecBuilder<RowCodecBuilder<T>> {
    * Deferred projection codec for one historical version. Holds only the inputs needed to generate
    * the codec; the class is compiled on the first {@link #compile} call (the first decode of this
    * version's hash), not at build time. Shared across encoder instances and immutable, so the
-   * compile relies on the shared code generator's own memoization rather than local locking.
+   * compile relies on the shared code generator's own memoization rather than local locking. The
+   * compile runs under the builder's build-time classloader so the precompiled-class probe and any
+   * Janino fallback resolve against the loader that built the codec, not the decode thread's.
    */
-  private static final class ProjectionSource implements BinaryRowEncoder.ProjectionSource {
+  private final class ProjectionSource implements BinaryRowEncoder.ProjectionSource {
     private final ProjectionVariant.Row variant;
 
     ProjectionSource(ProjectionVariant.Row variant) {
@@ -151,6 +153,11 @@ public class RowCodecBuilder<T> extends BaseCodecBuilder<RowCodecBuilder<T>> {
 
     @Override
     public BinaryRowEncoder.ProjectionCodec compile(BaseBinaryRowWriter writer, Fory fory) {
+      return withBuildTimeClassLoader(() -> compileProjection(writer, fory));
+    }
+
+    private BinaryRowEncoder.ProjectionCodec compileProjection(
+        BaseBinaryRowWriter writer, Fory fory) {
       Encoding codecFormat = variant.encoding();
       Schema historicalSchema = variant.historicalSchema();
       Class<?> projectionClass =

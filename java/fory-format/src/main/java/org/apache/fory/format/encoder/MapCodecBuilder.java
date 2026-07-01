@@ -158,6 +158,10 @@ public class MapCodecBuilder<M extends Map<?, ?>> extends BaseCodecBuilder<MapCo
 
     @Override
     public BinaryMapEncoder.ProjectionMapCodec compile(Encoding format, Fory fory) {
+      return withBuildTimeClassLoader(() -> compileProjection(format, fory));
+    }
+
+    private BinaryMapEncoder.ProjectionMapCodec compileProjection(Encoding format, Fory fory) {
       // The variant owns the position suffixes and nested routing; loadOrGenProjectionMapCodecClass
       // generates the projection row codec for every nested versioned bean in each position so the
       // map codec's references resolve. The projected key/value fields carry the substituted type
