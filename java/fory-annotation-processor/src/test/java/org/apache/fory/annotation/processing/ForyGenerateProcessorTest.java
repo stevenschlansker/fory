@@ -104,7 +104,7 @@ public class ForyGenerateProcessorTest {
   /**
    * The {@code INSTANCE} constant pattern recommended in the {@link
    * org.apache.fory.format.annotation.ForyGenerate} javadoc resolves the generated factory via
-   * {@code Encoders.factory(MyCodecs.class)}, so callers never type the {@code _Fory} suffix. This
+   * {@code RowCodecs.factory(MyCodecs.class)}, so callers never type the {@code _Fory} suffix. This
    * pins that wiring end-to-end against a compiled interface that exercises both shapes.
    */
   @Test
@@ -115,10 +115,10 @@ public class ForyGenerateProcessorTest {
             "test.MyCodecs",
             "package test;\n"
                 + "import org.apache.fory.format.annotation.ForyGenerate;\n"
-                + "import org.apache.fory.format.encoder.Encoders;\n"
+                + "import org.apache.fory.format.encoder.RowCodecs;\n"
                 + "@ForyGenerate\n"
                 + "public interface MyCodecs {\n"
-                + "  MyCodecs INSTANCE = Encoders.factory(MyCodecs.class);\n"
+                + "  MyCodecs INSTANCE = RowCodecs.factory(MyCodecs.class);\n"
                 + "  byte[] encodeBean(MyBean bean);\n"
                 + "  MyBean decodeBean(byte[] bytes);\n"
                 + "}\n");
@@ -129,10 +129,10 @@ public class ForyGenerateProcessorTest {
       try {
         Class<?> iface = loader.loadClass("test.MyCodecs");
         Object codecs = iface.getField("INSTANCE").get(null);
-        Assert.assertNotNull(codecs, "INSTANCE must resolve through Encoders.factory");
+        Assert.assertNotNull(codecs, "INSTANCE must resolve through RowCodecs.factory");
         Class<?> generated = loader.loadClass("test.MyCodecs_Fory");
         Assert.assertSame(
-            codecs.getClass(), generated, "Encoders.factory must return the generated _Fory");
+            codecs.getClass(), generated, "RowCodecs.factory must return the generated _Fory");
 
         Class<?> beanClass = loader.loadClass("test.MyBean");
         Object bean = beanClass.getConstructor(int.class, String.class).newInstance(42, "fory");

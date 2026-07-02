@@ -121,7 +121,11 @@
         <jdk>[11,]</jdk>
       </activation>
       <modules>
+        <module>fory-format-runtime</module>
+        <module>fory-format-codegen</module>
         <module>fory-format</module>
+        <module>fory-format-runtime-test-beans</module>
+        <module>fory-format-runtime-tests</module>
         <module>fory-testsuite</module>
       </modules>
     </profile>

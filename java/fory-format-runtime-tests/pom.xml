@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <parent>
+    <groupId>org.apache.fory</groupId>
+    <artifactId>fory-parent</artifactId>
+    <version>1.4.0-SNAPSHOT</version>
+  </parent>
+  <modelVersion>4.0.0</modelVersion>
+
+  <artifactId>fory-format-runtime-tests</artifactId>
+
+  <description>
+    Whitebox verification that @ForyGenerate row codecs run through the public runtime API with only
+    fory-format-runtime on the classpath. The annotation processor (and the code-generation module
+    it needs) is on the annotation-processor path only, never a compile or runtime dependency, so
+    this module's dependency graph is itself the proof that generated codecs execute without the
+    code-generation machinery.
+  </description>
+
+  <properties>
+    <maven.compiler.source>11</maven.compiler.source>
+    <maven.compiler.target>11</maven.compiler.target>
+    <fory.java.rootdir>${basedir}/..</fory.java.rootdir>
+  </properties>
+
+  <dependencies>
+    <!--
+      The ONLY fory dependency is the runtime jar. If a generated factory reached the
+      code-generation machinery, compilation or execution here would fail, because
+      fory-format-codegen is not on this module's compile or runtime classpath.
+    -->
+    <dependency>
+      <groupId>org.apache.fory</groupId>
+      <artifactId>fory-format-runtime</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- Bean classes for the @ForyGenerate interface, in their own already-compiled jar. -->
+    <dependency>
+      <groupId>org.apache.fory</groupId>
+      <artifactId>fory-format-runtime-test-beans</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.testng</groupId>
+      <artifactId>testng</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <!--
+            The @ForyGenerate processor and the code-generation module it invokes at process time
+            live on the annotation-processor path only. They generate the <Interface>_Fory and codec
+            classes at build time and are then absent from compile and runtime, mirroring how a real
+            application consumes @ForyGenerate.
+          -->
+          <annotationProcessorPaths>
+            <path>
+              <groupId>org.apache.fory</groupId>
+              <artifactId>fory-annotation-processor</artifactId>
+              <version>${project.version}</version>
+            </path>
+            <!--
+              The bean classes must be on the annotation-processor classpath: the processor resolves
+              them through its own classloader (not the compile classpath), so it can read their
+              schema at build time.
+            -->
+            <path>
+              <groupId>org.apache.fory</groupId>
+              <artifactId>fory-format-runtime-test-beans</artifactId>
+              <version>${project.version}</version>
+            </path>
+          </annotationProcessorPaths>
+          <!--
+            The processor refuses to generate when the generated-class unique-id suffix is enabled,
+            because it cannot reproduce the runtime suffix at build time (the emitted names would not
+            match the runtime probes). Fork javac and disable the suffix on that JVM, mirroring how a
+            real @ForyGenerate build must be configured.
+          -->
+          <fork>true</fork>
+          <compilerArgs>
+            <arg>-J-Dfory.enable_fory_generated_class_unique_id=false</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

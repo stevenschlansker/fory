@@ -69,7 +69,7 @@ import org.apache.fory.type.TypeUtils;
  *       class-loader hashcode suffix) names so the runtime probes pick them up.
  *   <li>An {@code <Interface>_Fory} implementation of the user's interface, exposed as a singleton
  *       via {@code instance()} and reachable from user code via {@code
- *       Encoders.factory(Interface.class)}. Each method body delegates to the corresponding
+ *       RowCodecs.factory(Interface.class)}. Each method body delegates to the corresponding
  *       encoder.
  * </ul>
  *
@@ -1111,8 +1111,12 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
     if (!packageName.isEmpty()) {
       sb.append("package ").append(packageName).append(";\n\n");
     }
+    // Generated code refers to the runtime helpers (GeneratedRowCodecs) and, on the evolution
+    // path, Encoders by fully-qualified name, so no encoder import is needed for them. Importing
+    // Encoders unconditionally would force the code-generation module onto a runtime-only
+    // consumer's classpath, defeating the split; the encoder-interface imports below are all that
+    // the method signatures require.
     sb.append("import org.apache.fory.format.encoder.ArrayEncoder;\n");
-    sb.append("import org.apache.fory.format.encoder.Encoders;\n");
     sb.append("import org.apache.fory.format.encoder.MapEncoder;\n");
     sb.append("import org.apache.fory.format.encoder.RowEncoder;\n");
     sb.append("import org.apache.fory.memory.MemoryBuffer;\n");
@@ -1129,7 +1133,7 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
       sb.append("  static {\n");
       for (CustomCodecRegistration r : codecRegs) {
         // Use the 3-arg overload so @ForyCustomCodec(beanType=...) scope is preserved at runtime.
-        sb.append("    Encoders.registerCustomCodec(")
+        sb.append("    org.apache.fory.format.encoder.GeneratedRowCodecs.registerCustomCodec(")
             .append(r.beanType)
             .append(".class, ")
             .append(r.fieldType)
@@ -1138,7 +1142,9 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
             .append("());\n");
       }
       for (CustomCollectionRegistration r : collRegs) {
-        sb.append("    Encoders.registerCustomCollectionFactory(")
+        sb.append(
+                "    org.apache.fory.format.encoder.GeneratedRowCodecs."
+                    + "registerCustomCollectionFactory(")
             .append(r.collectionType)
             .append(".class, ")
             .append(r.elementType)
@@ -1204,6 +1210,40 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
   }
 
   private String encoderFactoryCall(CodecKey key, Config config) {
+    // Schema evolution still constructs through the code-generation builders (Encoders): the
+    // runtime projection-dispatch assembly is not yet emitted standalone, so an evolution-enabled
+    // factory needs fory-format-codegen at runtime. Non-evolution factories construct through
+    // GeneratedRowCodecs, which resolves the precompiled codec classes with no code-generation
+    // dependency, so they run with only fory-format-runtime on the classpath.
+    if (config.evolution) {
+      return evolutionFactoryCall(key, config);
+    }
+    String formatArg = "org.apache.fory.format.annotation.RowFormat." + config.format.name();
+    switch (key.kind) {
+      case ROW:
+        return "org.apache.fory.format.encoder.GeneratedRowCodecs.rowEncoder("
+            + erasure(key.beanType)
+            + ".class, "
+            + formatArg
+            + ", null)";
+      case ARRAY:
+        return "org.apache.fory.format.encoder.GeneratedRowCodecs.arrayEncoder(new TypeRef<"
+            + key.beanType
+            + ">() {}, "
+            + formatArg
+            + ", null)";
+      case MAP:
+        return "org.apache.fory.format.encoder.GeneratedRowCodecs.mapEncoder(new TypeRef<"
+            + key.beanType
+            + ">() {}, "
+            + formatArg
+            + ", null)";
+      default:
+        throw new IllegalStateException(key.kind.toString());
+    }
+  }
+
+  private String evolutionFactoryCall(CodecKey key, Config config) {
     // Use Encoders.buildXxxCodec()...build().get() everywhere so the generated source does not
     // get caught by overload resolution on (Class, null) — Encoders.bean has both Fory and
     // BinaryRowWriter overloads.
@@ -1211,19 +1251,20 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
     switch (key.kind) {
       case ROW:
         sb =
-            new StringBuilder("Encoders.buildBeanCodec(")
+            new StringBuilder("org.apache.fory.format.encoder.Encoders.buildBeanCodec(")
                 .append(erasure(key.beanType))
                 .append(".class)");
         break;
       case ARRAY:
         sb =
-            new StringBuilder("Encoders.buildArrayCodec(new TypeRef<")
+            new StringBuilder(
+                    "org.apache.fory.format.encoder.Encoders.buildArrayCodec(new TypeRef<")
                 .append(key.beanType)
                 .append(">() {})");
         break;
       case MAP:
         sb =
-            new StringBuilder("Encoders.buildMapCodec(new TypeRef<")
+            new StringBuilder("org.apache.fory.format.encoder.Encoders.buildMapCodec(new TypeRef<")
                 .append(key.beanType)
                 .append(">() {})");
         break;
@@ -1233,9 +1274,7 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
     if (config.format == RowFormat.COMPACT) {
       sb.append(".compactEncoding()");
     }
-    if (config.evolution) {
-      sb.append(".withSchemaEvolution()");
-    }
+    sb.append(".withSchemaEvolution()");
     return sb.append(".build().get()").toString();
   }
 

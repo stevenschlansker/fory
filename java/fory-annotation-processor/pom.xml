@@ -49,7 +49,7 @@
          now compile-scope. -->
     <dependency>
       <groupId>org.apache.fory</groupId>
-      <artifactId>fory-format</artifactId>
+      <artifactId>fory-format-codegen</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
