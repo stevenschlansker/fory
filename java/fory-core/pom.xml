@@ -181,6 +181,57 @@
                 </configuration>
               </execution>
               <execution>
+                <!--
+                  Compile non-module-info java9 sources (e.g. VarHandleCodegenSupport, which needs
+                  the Java 9 VarHandle API and so cannot live in the Java 8 baseline) into
+                  META-INF/versions/9, so generated codec sources naming them resolve when a
+                  consumer compiles at release 9 or higher.
+
+                  These classes must compile in plain classpath mode, but two things push javac into
+                  module compilation: a module-info.java on its source path, and a module-info.class
+                  in its output directory. The class lives in a module-info-free source root
+                  (src/main/java9-classes), and it compiles into a scratch directory rather than
+                  ${fory.mr.classes}/9, where compile-java9-module-info has already written
+                  module-info.class. In module mode javac would try to resolve the `requires static`
+                  guava/slf4j/jsr305 modules, which are on the classpath rather than a module path,
+                  and fail. The compiled classes are then copied into ${fory.mr.classes}/9 alongside
+                  module-info.class for inject-multi-release-classes to jar into META-INF/versions/9.
+                -->
+                <id>compile-java9-classes</id>
+                <phase>process-classes</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target>
+                    <delete dir="${fory.mr.classes}/9-classes"/>
+                    <mkdir dir="${fory.mr.classes}/9-classes"/>
+                    <javac srcdir="${project.basedir}/src/main/java9-classes"
+                           destdir="${fory.mr.classes}/9-classes"
+                           includeantruntime="false"
+                           fork="true"
+                           executable="${java.home}/bin/javac"
+                           debug="true">
+                      <include name="org/**/*.java"/>
+                      <classpath>
+                        <path refid="maven.compile.classpath"/>
+                        <pathelement location="${project.build.outputDirectory}"/>
+                      </classpath>
+                      <compilerarg value="--release"/>
+                      <compilerarg value="9"/>
+                    </javac>
+                    <mkdir dir="${fory.mr.classes}/9"/>
+                    <copy todir="${fory.mr.classes}/9">
+                      <fileset dir="${fory.mr.classes}/9-classes"/>
+                    </copy>
+                    <!-- Remove the scratch tree so inject-multi-release-classes, which globs
+                         ${fory.mr.classes} into META-INF/versions, does not emit a stray
+                         META-INF/versions/9-classes entry. -->
+                    <delete dir="${fory.mr.classes}/9-classes"/>
+                  </target>
+                </configuration>
+              </execution>
+              <execution>
                 <id>inject-multi-release-classes</id>
                 <phase>package</phase>
                 <goals>
@@ -355,6 +406,11 @@
                       </fileset>
                     </copy>
                     <copy todir="${fory.jdk25.test.classes}" overwrite="true">
+                      <fileset dir="${fory.mr.classes}/9">
+                        <exclude name="module-info.class"/>
+                      </fileset>
+                    </copy>
+                    <copy todir="${fory.jdk25.test.classes}" overwrite="true">
                       <fileset dir="${fory.mr.classes}/16">
                         <exclude name="module-info.class"/>
                       </fileset>
@@ -404,6 +460,9 @@
                         message="Multi-release source patching requires ${jdk25.sources.jar}; run with source-jar generation enabled."/>
                     <jar destfile="${jdk25.sources.jar}" update="true">
                       <zipfileset dir="${project.basedir}/src/main/java9" prefix="META-INF/versions/9">
+                        <include name="**/*.java"/>
+                      </zipfileset>
+                      <zipfileset dir="${project.basedir}/src/main/java9-classes" prefix="META-INF/versions/9">
                         <include name="**/*.java"/>
                       </zipfileset>
                       <zipfileset dir="${project.basedir}/src/main/java16" prefix="META-INF/versions/16">

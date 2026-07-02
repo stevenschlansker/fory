@@ -24,7 +24,12 @@ import java.lang.reflect.Field;
 import org.apache.fory.annotation.Internal;
 import org.apache.fory.platform.internal._JDKAccess;
 
-/** JDK25 helper for source-generated serializers that use per-field static VarHandles. */
+/**
+ * Helper for source-generated serializers that use per-field static VarHandles. Packaged from
+ * version 9 (not the Java 8 baseline, which predates VarHandle) so generated codec sources naming
+ * it resolve at any consumer {@code --release 9+}, even though the path is only used at runtime on
+ * JDK 25+.
+ */
 @Internal
 public final class VarHandleCodegenSupport {
   private VarHandleCodegenSupport() {}
