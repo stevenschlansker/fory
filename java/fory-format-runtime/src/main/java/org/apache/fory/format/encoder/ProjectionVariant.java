@@ -32,44 +32,36 @@ import org.apache.fory.reflect.TypeRef;
  * schema history reaches, together with the identity that combination's generated codec class has
  * on the wire and on the classpath. A variant is the single owner of that derivation — the strict
  * (or combined) hash that keys it, the class-name suffix(es), the per-nested-bean suffix routing,
- * the projected historical field, and the encoder builder that emits its source.
+ * and the projected historical field.
  *
  * <p>Both consumers of a codec's version cross-product read variants instead of re-deriving them.
- * The build-time {@link PrecompileApi} emits {@link #generatedClassName()} / {@link #genCode()} for
- * each variant; the runtime codec builders index one deferred projection source per variant, keyed
- * by {@link #hash()}, and their {@code compile} reads the variant's projected field and encoder
- * builder rather than recomputing suffixes. Because a single deriver feeds both, the precompiled
- * class name a runtime probe looks for is equal to the emitted name by construction.
+ * The runtime codec builders index one deferred projection source per variant, keyed by {@link
+ * #hash()}, and their {@code compile} reads the variant's projected field and suffixes; the
+ * build-time precompiler and code-generation builders derive each variant's class name and source
+ * from the same identity (see {@code ProjectionCodegen} in the code-generation module). Because a
+ * single deriver feeds both, the precompiled class name a runtime probe looks for is equal to the
+ * emitted name by construction.
  *
  * <p>Variants carry no {@link org.apache.fory.Fory}, writer, or method handle: they are the pure
  * identity half of projection codegen. Constructing the writers and invoking the constructor is the
- * runtime half and stays in each codec builder's projection source.
+ * runtime half and stays in each codec builder's projection source. The {@link Encoding} a variant
+ * holds is the codegen-free runtime encoding; the code-generation module attaches source emission
+ * externally.
  */
 abstract class ProjectionVariant {
 
-  private final CodecEncoding encoding;
+  private final Encoding encoding;
 
-  ProjectionVariant(final CodecEncoding encoding) {
+  ProjectionVariant(final Encoding encoding) {
     this.encoding = encoding;
   }
 
-  final CodecEncoding encoding() {
+  final Encoding encoding() {
     return encoding;
   }
 
   /** The LongMap key the runtime dispatches this variant on: strict hash, or combined map hash. */
   abstract long hash();
-
-  /** The encoder builder that emits this variant's generated codec source. */
-  abstract BaseBinaryEncoderBuilder builder();
-
-  /** Fully qualified name of the generated codec class, matching what the builder emits. */
-  abstract String generatedClassName();
-
-  /** The generated Java source for this variant's codec class. */
-  final String genCode() {
-    return builder().genCode();
-  }
 
   /**
    * A row projection: one historical {@link SchemaHistory.VersionedSchema} of a bean. The strict
@@ -83,18 +75,22 @@ abstract class ProjectionVariant {
     private final Map<Class<?>, String> nestedSuffixes;
 
     Row(
-        final CodecEncoding encoding,
+        final Encoding encoding,
         final Class<?> beanClass,
         final SchemaHistory.VersionedSchema version) {
       super(encoding);
       this.beanClass = beanClass;
       this.version = version;
       this.suffix = ProjectionRouting.projectionSuffix(version);
-      this.nestedSuffixes = ProjectionRouting.nestedSuffixesFor(version, encoding);
+      this.nestedSuffixes = ProjectionRouting.nestedSuffixesFor(version);
     }
 
     Class<?> beanClass() {
       return beanClass;
+    }
+
+    SchemaHistory.VersionedSchema version() {
+      return version;
     }
 
     Schema historicalSchema() {
@@ -117,23 +113,6 @@ abstract class ProjectionVariant {
     long hash() {
       return version.strictHash();
     }
-
-    @Override
-    BaseBinaryEncoderBuilder builder() {
-      return (BaseBinaryEncoderBuilder)
-          encoding()
-              .newProjectionRowEncoder(
-                  TypeRef.of(beanClass),
-                  version.schema(),
-                  version.liveFieldNames(),
-                  suffix,
-                  nestedSuffixes);
-    }
-
-    @Override
-    String generatedClassName() {
-      return builder().codecQualifiedClassName(beanClass) + suffix;
-    }
   }
 
   /**
@@ -151,7 +130,7 @@ abstract class ProjectionVariant {
     private final Map<Class<?>, String> nestedSuffixes;
 
     Array(
-        final CodecEncoding encoding,
+        final Encoding encoding,
         final TypeRef<? extends java.util.Collection<?>> collectionType,
         final Class<?> elementClass,
         final String elementName,
@@ -164,7 +143,7 @@ abstract class ProjectionVariant {
       this.prefix = prefix;
       this.version = version;
       this.suffix = ProjectionRouting.projectionSuffix(version);
-      this.nestedSuffixes = ProjectionRouting.nestedSuffixesFor(version, encoding);
+      this.nestedSuffixes = ProjectionRouting.nestedSuffixesFor(version);
     }
 
     TypeRef<? extends java.util.Collection<?>> collectionType() {
@@ -173,6 +152,14 @@ abstract class ProjectionVariant {
 
     Class<?> elementClass() {
       return elementClass;
+    }
+
+    String prefix() {
+      return prefix;
+    }
+
+    SchemaHistory.VersionedSchema version() {
+      return version;
     }
 
     String suffix() {
@@ -191,19 +178,6 @@ abstract class ProjectionVariant {
     @Override
     long hash() {
       return version.strictHash();
-    }
-
-    @Override
-    BaseBinaryEncoderBuilder builder() {
-      return (BaseBinaryEncoderBuilder)
-          encoding()
-              .newProjectionArrayEncoder(
-                  collectionType, TypeRef.of(elementClass), suffix, nestedSuffixes);
-    }
-
-    @Override
-    String generatedClassName() {
-      return builder().codecQualifiedClassName(elementClass, prefix) + suffix;
     }
   }
 
@@ -229,7 +203,7 @@ abstract class ProjectionVariant {
     private final Map<Class<?>, String> keyNested;
 
     MapVariant(
-        final CodecEncoding encoding,
+        final Encoding encoding,
         final TypeRef<? extends Map<?, ?>> mapType,
         final TypeRef<?> beanToken,
         final Class<?> beanClass,
@@ -251,14 +225,14 @@ abstract class ProjectionVariant {
       // current or non-bean position keeps the empty suffix and reads at its current schema.
       if (valVs != null) {
         this.valSuffix = ProjectionRouting.projectionSuffix(valVs);
-        this.valNested = ProjectionRouting.nestedSuffixesFor(valVs, encoding);
+        this.valNested = ProjectionRouting.nestedSuffixesFor(valVs);
       } else {
         this.valSuffix = "";
         this.valNested = null;
       }
       if (keyVs != null) {
         this.keySuffix = ProjectionRouting.projectionSuffix(keyVs);
-        this.keyNested = ProjectionRouting.nestedSuffixesFor(keyVs, encoding);
+        this.keyNested = ProjectionRouting.nestedSuffixesFor(keyVs);
       } else {
         this.keySuffix = "";
         this.keyNested = null;
@@ -269,8 +243,24 @@ abstract class ProjectionVariant {
       return mapType;
     }
 
+    TypeRef<?> beanToken() {
+      return beanToken;
+    }
+
     Class<?> beanClass() {
       return beanClass;
+    }
+
+    String prefix() {
+      return prefix;
+    }
+
+    SchemaHistory.VersionedSchema valVersion() {
+      return valVs;
+    }
+
+    SchemaHistory.VersionedSchema keyVersion() {
+      return keyVs;
     }
 
     String valSuffix() {
@@ -320,20 +310,6 @@ abstract class ProjectionVariant {
     @Override
     long hash() {
       return hash;
-    }
-
-    @Override
-    BaseBinaryEncoderBuilder builder() {
-      return (BaseBinaryEncoderBuilder)
-          encoding()
-              .newProjectionMapEncoder(
-                  mapType, beanToken, valSuffix, keySuffix, valNested, keyNested);
-    }
-
-    @Override
-    String generatedClassName() {
-      MapEncoderBuilder mapBuilder = (MapEncoderBuilder) builder();
-      return mapBuilder.codecQualifiedClassName(beanClass, prefix) + mapBuilder.mapClassSuffix();
     }
   }
 }

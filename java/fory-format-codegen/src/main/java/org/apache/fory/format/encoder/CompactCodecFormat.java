@@ -37,6 +37,11 @@ enum CompactCodecFormat implements CodecEncoding {
   private static final Encoding RUNTIME = RowEncoding.COMPACT;
 
   @Override
+  public Schema sortSchema(final Schema schema) {
+    return RUNTIME.sortSchema(schema);
+  }
+
+  @Override
   public BaseBinaryRowWriter newWriter(final Schema schema) {
     return RUNTIME.newWriter(schema);
   }

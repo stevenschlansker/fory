@@ -103,6 +103,10 @@ public class RowCodecBuilder<T> extends BaseCodecBuilder<RowCodecBuilder<T>> {
     // here (unlike the map codec's combined (key, value) hash).
     final LongMap<BinaryRowEncoder.ProjectionSource> projectionSources = new LongMap<>();
     for (ProjectionVariant.Row variant : ProjectionVariants.forRow(beanClass, codecFormat)) {
+      // Generate the inner projection classes this combination references so the outer's
+      // `new InnerCodec<suffix>` resolves at class load; the outer class itself is compiled lazily
+      // on the first decode of its hash (below).
+      ProjectionCodegen.materializeNested(variant, codecFormat);
       projectionSources.put(variant.hash(), new ProjectionSource(variant));
     }
 
@@ -158,7 +162,6 @@ public class RowCodecBuilder<T> extends BaseCodecBuilder<RowCodecBuilder<T>> {
 
     private BinaryRowEncoder.ProjectionCodec compileProjection(
         BaseBinaryRowWriter writer, Fory fory) {
-      CodecEncoding codecFormat = variant.encoding();
       Schema historicalSchema = variant.historicalSchema();
       Class<?> projectionClass =
           Encoders.loadOrGenProjectionRowCodecClass(

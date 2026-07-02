@@ -325,25 +325,28 @@ public class ForyGenerateProcessorTest {
                 + "}\n");
     Assert.assertTrue(result.success, result.diagnostics());
     try (URLClassLoader loader = result.classLoader()) {
-      // Write a v1 payload at runtime using the producer-side bean (no email field).
-      Class<?> userV1 = loader.loadClass("test.UserV1");
-      Object v1 = userV1.getConstructor(long.class, String.class).newInstance(7L, "alice");
+      // The evolution factory resolves projection codecs lazily, on the first decode of an older
+      // version's hash, via the thread context classloader. Keep the generated-class loader active
+      // across both encode and decode so that lazy lookup can see test.UserV2RowCodec_V1, mirroring
+      // how a runtime-only application runs with its own classloader as the context.
       ClassLoader prior = Thread.currentThread().getContextClassLoader();
       Thread.currentThread().setContextClassLoader(loader);
-      byte[] v1Bytes;
       try {
-        v1Bytes = encodeWithRuntimeBuilder(userV1, v1);
+        // Write a v1 payload at runtime using the producer-side bean (no email field).
+        Class<?> userV1 = loader.loadClass("test.UserV1");
+        Object v1 = userV1.getConstructor(long.class, String.class).newInstance(7L, "alice");
+        byte[] v1Bytes = encodeWithRuntimeBuilder(userV1, v1);
+        // Decode through the precompiled, evolution-aware factory.
+        Object codecs = invokeStaticInstance(loader, "test.Codecs_Fory");
+        Class<?> userV2 = loader.loadClass("test.UserV2");
+        Object decoded = invoke(codecs, "decode", new Class<?>[] {byte[].class}, v1Bytes);
+        Assert.assertEquals(getField(userV2, decoded, "id"), 7L);
+        Assert.assertEquals(getField(userV2, decoded, "name"), "alice");
+        // Email field is not present in the v1 payload; evolution leaves it null.
+        Assert.assertNull(getField(userV2, decoded, "email"));
       } finally {
         Thread.currentThread().setContextClassLoader(prior);
       }
-      // Decode through the precompiled, evolution-aware factory.
-      Object codecs = invokeStaticInstance(loader, "test.Codecs_Fory");
-      Class<?> userV2 = loader.loadClass("test.UserV2");
-      Object decoded = invoke(codecs, "decode", new Class<?>[] {byte[].class}, v1Bytes);
-      Assert.assertEquals(getField(userV2, decoded, "id"), 7L);
-      Assert.assertEquals(getField(userV2, decoded, "name"), "alice");
-      // Email field is not present in the v1 payload; evolution leaves it null.
-      Assert.assertNull(getField(userV2, decoded, "email"));
     }
   }
 

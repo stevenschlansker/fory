@@ -94,6 +94,7 @@ public class ArrayCodecBuilder<C extends Collection<?>>
     LongMap<BinaryArrayEncoder.ProjectionSource> projectionSources = new LongMap<>();
     for (ProjectionVariant.Array variant :
         ProjectionVariants.forArray(collectionType, elementType, elementClass, codecFormat)) {
+      ProjectionCodegen.materializeNested(variant, codecFormat);
       projectionSources.put(variant.hash(), new ProjectionSource(variant));
     }
     final Function<BinaryArrayWriter, GeneratedArrayEncoder> currentFactory =

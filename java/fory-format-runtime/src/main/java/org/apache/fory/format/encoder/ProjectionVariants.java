@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.UnaryOperator;
 import org.apache.fory.collection.LongMap;
-import org.apache.fory.format.row.binary.writer.CompactBinaryRowWriter;
 import org.apache.fory.format.type.CustomTypeEncoderRegistry;
 import org.apache.fory.format.type.DataTypes;
 import org.apache.fory.format.type.Field;
@@ -39,14 +38,15 @@ import org.apache.fory.type.TypeResolutionContext;
 /**
  * The single owner of a codec's projection cross-product. Walking a bean's (or an array element's,
  * or a map's key/value) schema history and turning each reachable version combination into a {@link
- * ProjectionVariant} happens here and nowhere else, so the build-time {@link PrecompileApi} and the
- * runtime codec builders enumerate exactly the same set. Both then read the variants' derived
- * identity — hash, class name, suffixes, projected fields — rather than deriving it a second time.
+ * ProjectionVariant} happens here and nowhere else, so the build-time precompiler and the runtime
+ * codec builders enumerate exactly the same set. Both then read the variants' derived identity —
+ * hash, class name, suffixes, projected fields — rather than deriving it a second time.
  *
- * <p>Enumeration compiles nothing: it produces the identity descriptors. The runtime builders index
- * them lazily and compile a combination's codec class on the first decode of its hash; the
- * precompiler emits every combination's source up front. The map enumerator additionally proves the
- * combined (key, value) hashes are collision-free, the one build-time check both callers share.
+ * <p>Enumeration compiles nothing: it produces the identity descriptors and depends only on the
+ * runtime {@link Encoding}. The runtime builders index them lazily and compile a combination's
+ * codec class on the first decode of its hash; the precompiler emits every combination's source up
+ * front. The map enumerator additionally proves the combined (key, value) hashes are
+ * collision-free, the one build-time check both callers share.
  */
 final class ProjectionVariants {
 
@@ -56,8 +56,7 @@ final class ProjectionVariants {
    * Every non-current row projection of {@code beanClass}, keyed by the strict hash the runtime
    * dispatches on. The current version is served by the unsuffixed codec and is not a variant.
    */
-  static List<ProjectionVariant.Row> forRow(
-      final Class<?> beanClass, final CodecEncoding encoding) {
+  static List<ProjectionVariant.Row> forRow(final Class<?> beanClass, final Encoding encoding) {
     SchemaHistory history = SchemaHistory.build(beanClass, schemaTransform(encoding));
     SchemaHistory.VersionedSchema current = history.current();
     List<ProjectionVariant.Row> variants = new ArrayList<>();
@@ -71,6 +70,16 @@ final class ProjectionVariants {
   }
 
   /**
+   * Strict hash of {@code beanClass}'s current version, which an evolving row encoder writes as the
+   * schema-hash header and dispatches decodes against. Distinct from {@link
+   * DataTypes#computeSchemaHash}, so it must be read from the schema history rather than the
+   * schema.
+   */
+  static long currentRowHash(final Class<?> beanClass, final Encoding encoding) {
+    return SchemaHistory.build(beanClass, schemaTransform(encoding)).current().strictHash();
+  }
+
+  /**
    * Every non-current array projection over the element field, enumerated across every versioned
    * bean reachable through the element's wrappers so an element like {@code Map<KBean, VBean>}
    * evolves both. Keyed by the element schema's strict hash.
@@ -79,7 +88,7 @@ final class ProjectionVariants {
       final TypeRef<? extends Collection<?>> collectionType,
       final TypeRef<?> elementType,
       final Class<?> elementClass,
-      final CodecEncoding encoding) {
+      final Encoding encoding) {
     Field elementField =
         DataTypes.fieldOfSchema(TypeInference.inferSchema(collectionType, false), 0);
     String elementName = elementField.name();
@@ -97,6 +106,21 @@ final class ProjectionVariants {
               encoding, collectionType, elementClass, elementName, prefix, vs));
     }
     return variants;
+  }
+
+  /**
+   * Strict hash of the current element schema, which an evolving array encoder writes as the header
+   * and dispatches decodes against. Distinct from {@link DataTypes#computeSchemaHash}.
+   */
+  static long currentArrayHash(
+      final TypeRef<? extends Collection<?>> collectionType,
+      final TypeRef<?> elementType,
+      final Encoding encoding) {
+    Field elementField =
+        DataTypes.fieldOfSchema(TypeInference.inferSchema(collectionType, false), 0);
+    return SchemaHistory.forElement(elementField.name(), elementType, schemaTransform(encoding))
+        .current()
+        .strictHash();
   }
 
   /**
@@ -120,7 +144,7 @@ final class ProjectionVariants {
       final TypeRef<?> valType,
       final Class<?> valClass,
       final Class<?> keyClass,
-      final CodecEncoding encoding) {
+      final Encoding encoding) {
     UnaryOperator<Schema> transform = schemaTransform(encoding);
     Field mapField = DataTypes.fieldOfSchema(TypeInference.inferSchema(mapType, false), 0);
     String prefix = TypeInference.inferTypeName(mapType);
@@ -187,7 +211,7 @@ final class ProjectionVariants {
       final TypeRef<?> valType,
       final Class<?> valClass,
       final Class<?> keyClass,
-      final CodecEncoding encoding) {
+      final Encoding encoding) {
     UnaryOperator<Schema> transform = schemaTransform(encoding);
     Field mapField = DataTypes.fieldOfSchema(TypeInference.inferSchema(mapType, false), 0);
     SchemaHistory valHistory =
@@ -220,9 +244,7 @@ final class ProjectionVariants {
     return vs == null ? NON_BEAN_POSITION_HASH : vs.strictHash();
   }
 
-  private static UnaryOperator<Schema> schemaTransform(final CodecEncoding encoding) {
-    return encoding == CompactCodecFormat.INSTANCE
-        ? CompactBinaryRowWriter::sortSchema
-        : UnaryOperator.identity();
+  private static UnaryOperator<Schema> schemaTransform(final Encoding encoding) {
+    return encoding::sortSchema;
   }
 }

@@ -43,4 +43,13 @@
     <maven.compiler.target>11</maven.compiler.target>
     <fory.java.rootdir>${basedir}/..</fory.java.rootdir>
   </properties>
+
+  <dependencies>
+    <!-- Provides the @ForySchema/@ForyVersion annotations the schema-evolution beans carry. -->
+    <dependency>
+      <groupId>org.apache.fory</groupId>
+      <artifactId>fory-format-runtime</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+  </dependencies>
 </project>

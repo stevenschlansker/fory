@@ -34,6 +34,14 @@ import org.apache.fory.memory.MemoryBuffer;
  * builder-producing half lives in {@code CodecEncoding} in the code-generation module.
  */
 interface Encoding {
+  /**
+   * The schema this encoding stores on the wire, given the inferred {@code schema}. The compact
+   * layout sorts fields by fixed-region size; the default layout keeps them as inferred. The
+   * projection enumeration keys schema-history hashes on this, so historical and current schemas
+   * are compared in the same field order the writer uses.
+   */
+  Schema sortSchema(Schema schema);
+
   BaseBinaryRowWriter newWriter(Schema schema);
 
   BaseBinaryRowWriter newWriter(Schema schema, MemoryBuffer buffer);

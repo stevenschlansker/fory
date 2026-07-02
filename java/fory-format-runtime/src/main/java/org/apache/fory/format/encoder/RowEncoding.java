@@ -43,6 +43,11 @@ import org.apache.fory.memory.MemoryBuffer;
 enum RowEncoding implements Encoding {
   DEFAULT {
     @Override
+    public Schema sortSchema(final Schema schema) {
+      return schema;
+    }
+
+    @Override
     public BaseBinaryRowWriter newWriter(final Schema schema) {
       return new BinaryRowWriter(schema);
     }
@@ -68,6 +73,11 @@ enum RowEncoding implements Encoding {
     }
   },
   COMPACT {
+    @Override
+    public Schema sortSchema(final Schema schema) {
+      return CompactBinaryRowWriter.sortSchema(schema);
+    }
+
     @Override
     public BaseBinaryRowWriter newWriter(final Schema schema) {
       return new CompactBinaryRowWriter(schema);

@@ -1210,30 +1210,30 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
   }
 
   private String encoderFactoryCall(CodecKey key, Config config) {
-    // Schema evolution still constructs through the code-generation builders (Encoders): the
-    // runtime projection-dispatch assembly is not yet emitted standalone, so an evolution-enabled
-    // factory needs fory-format-codegen at runtime. Non-evolution factories construct through
-    // GeneratedRowCodecs, which resolves the precompiled codec classes with no code-generation
-    // dependency, so they run with only fory-format-runtime on the classpath.
-    if (config.evolution) {
-      return evolutionFactoryCall(key, config);
-    }
+    // Every factory, evolution or not, constructs through GeneratedRowCodecs, which resolves the
+    // precompiled codec classes (and, for evolution, their precompiled projection codecs) with no
+    // code-generation dependency, so a generated factory runs with only fory-format-runtime on the
+    // classpath.
     String formatArg = "org.apache.fory.format.annotation.RowFormat." + config.format.name();
+    boolean evo = config.evolution;
     switch (key.kind) {
       case ROW:
-        return "org.apache.fory.format.encoder.GeneratedRowCodecs.rowEncoder("
+        return "org.apache.fory.format.encoder.GeneratedRowCodecs."
+            + (evo ? "evolvingRowEncoder(" : "rowEncoder(")
             + erasure(key.beanType)
             + ".class, "
             + formatArg
             + ", null)";
       case ARRAY:
-        return "org.apache.fory.format.encoder.GeneratedRowCodecs.arrayEncoder(new TypeRef<"
+        return "org.apache.fory.format.encoder.GeneratedRowCodecs."
+            + (evo ? "evolvingArrayEncoder(new TypeRef<" : "arrayEncoder(new TypeRef<")
             + key.beanType
             + ">() {}, "
             + formatArg
             + ", null)";
       case MAP:
-        return "org.apache.fory.format.encoder.GeneratedRowCodecs.mapEncoder(new TypeRef<"
+        return "org.apache.fory.format.encoder.GeneratedRowCodecs."
+            + (evo ? "evolvingMapEncoder(new TypeRef<" : "mapEncoder(new TypeRef<")
             + key.beanType
             + ">() {}, "
             + formatArg
@@ -1241,41 +1241,6 @@ public final class ForyGenerateProcessor extends AbstractProcessor {
       default:
         throw new IllegalStateException(key.kind.toString());
     }
-  }
-
-  private String evolutionFactoryCall(CodecKey key, Config config) {
-    // Use Encoders.buildXxxCodec()...build().get() everywhere so the generated source does not
-    // get caught by overload resolution on (Class, null) — Encoders.bean has both Fory and
-    // BinaryRowWriter overloads.
-    StringBuilder sb;
-    switch (key.kind) {
-      case ROW:
-        sb =
-            new StringBuilder("org.apache.fory.format.encoder.Encoders.buildBeanCodec(")
-                .append(erasure(key.beanType))
-                .append(".class)");
-        break;
-      case ARRAY:
-        sb =
-            new StringBuilder(
-                    "org.apache.fory.format.encoder.Encoders.buildArrayCodec(new TypeRef<")
-                .append(key.beanType)
-                .append(">() {})");
-        break;
-      case MAP:
-        sb =
-            new StringBuilder("org.apache.fory.format.encoder.Encoders.buildMapCodec(new TypeRef<")
-                .append(key.beanType)
-                .append(">() {})");
-        break;
-      default:
-        throw new IllegalStateException(key.kind.toString());
-    }
-    if (config.format == RowFormat.COMPACT) {
-      sb.append(".compactEncoding()");
-    }
-    sb.append(".withSchemaEvolution()");
-    return sb.append(".build().get()").toString();
   }
 
   private String erasure(String typeName) {

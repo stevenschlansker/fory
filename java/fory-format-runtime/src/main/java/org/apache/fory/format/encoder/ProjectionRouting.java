@@ -26,10 +26,14 @@ import java.util.Map;
 import org.apache.fory.format.type.SchemaHistory;
 
 /**
- * Suffix routing shared by row/array/map projection codec generation. Each cross-product entry gets
- * a class-name suffix that uniquely identifies its full nested combination, and the per-nested-bean
- * suffix map directs codegen to embed the right inner projection class for each nested-bean type at
- * this combination's versions.
+ * Suffix routing shared by row/array/map projection codec identity. Each cross-product entry gets a
+ * class-name suffix that uniquely identifies its full nested combination, and the per-nested-bean
+ * suffix map names the inner projection class to embed for each nested-bean type at this
+ * combination's versions.
+ *
+ * <p>This is pure identity: it derives names, not code. The precompiled runtime path resolves the
+ * named inner classes by {@code Class.forName}, and the code-generation module materializes them
+ * from the same routing (see {@code ProjectionCodegen}); neither derivation lives here.
  */
 final class ProjectionRouting {
   private ProjectionRouting() {}
@@ -66,35 +70,17 @@ final class ProjectionRouting {
   }
 
   /**
-   * Per-nested-bean-type suffix map for codegen, recursively materializing every inner projection
-   * class implied by {@code vs}. Empty string means the inner bean uses its current-version codec
-   * class. The chosen inner entry is taken directly from {@code vs}, so this resolves the correct
-   * combination to arbitrary depth without re-deriving it from a version number.
-   *
-   * <p>Called when an outer combination is first compiled (its hash first decoded), so the inner
-   * classes are generated lazily alongside it rather than at builder time.
+   * Per-nested-bean-type suffix map, recursively naming every inner projection class implied by
+   * {@code vs}. Empty string means the inner bean uses its current-version codec class. The chosen
+   * inner entry is taken directly from {@code vs}, so this resolves the correct combination to
+   * arbitrary depth without re-deriving it from a version number.
    */
-  static Map<Class<?>, String> nestedSuffixesFor(
-      SchemaHistory.VersionedSchema vs, CodecEncoding codecFormat) {
+  static Map<Class<?>, String> nestedSuffixesFor(SchemaHistory.VersionedSchema vs) {
     Map<Class<?>, String> out = new HashMap<>();
     for (Map.Entry<Class<?>, SchemaHistory.VersionedSchema> e : vs.nestedBeanSchemas().entrySet()) {
       Class<?> innerClass = e.getKey();
       SchemaHistory.VersionedSchema innerVs = e.getValue();
-      if (innerVs.isCurrent()) {
-        out.put(innerClass, "");
-      } else {
-        String innerSuffix = projectionSuffix(innerVs);
-        out.put(innerClass, innerSuffix);
-        // Generate the inner's projection class so the outer's `new InnerCodec<suffix>` resolves at
-        // class load. Recurses through the inner's own nested combination.
-        Encoders.loadOrGenProjectionRowCodecClass(
-            innerClass,
-            codecFormat,
-            innerVs.schema(),
-            innerVs.liveFieldNames(),
-            innerSuffix,
-            nestedSuffixesFor(innerVs, codecFormat));
-      }
+      out.put(innerClass, innerVs.isCurrent() ? "" : projectionSuffix(innerVs));
     }
     return out;
   }

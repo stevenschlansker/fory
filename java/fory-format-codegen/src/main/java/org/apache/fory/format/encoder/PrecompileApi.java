@@ -198,7 +198,7 @@ public final class PrecompileApi {
       List<GeneratedSource> result,
       Set<String> emittedNames) {
     for (ProjectionVariant variant : ProjectionVariants.forRow(beanClass, encoding)) {
-      emit(variant, result, emittedNames);
+      emit(variant, encoding, result, emittedNames);
     }
   }
 
@@ -211,7 +211,7 @@ public final class PrecompileApi {
     Class<?> elementClass = getRawType(elementType);
     for (ProjectionVariant variant :
         ProjectionVariants.forArray(arrayCls, elementType, elementClass, encoding)) {
-      emit(variant, result, emitted);
+      emit(variant, encoding, result, emitted);
     }
   }
 
@@ -226,16 +226,19 @@ public final class PrecompileApi {
     Class<?> keyClass = ProjectionVariants.evolutionBean(keyType);
     for (ProjectionVariant variant :
         ProjectionVariants.forMap(mapCls, keyType, valueType, valClass, keyClass, encoding)) {
-      emit(variant, result, emitted);
+      emit(variant, encoding, result, emitted);
     }
   }
 
   /** Emit one variant's generated source, deduplicated by its generated class name. */
   private static void emit(
-      ProjectionVariant variant, List<GeneratedSource> result, Set<String> emitted) {
-    String qualified = variant.generatedClassName();
+      ProjectionVariant variant,
+      CodecEncoding encoding,
+      List<GeneratedSource> result,
+      Set<String> emitted) {
+    String qualified = ProjectionCodegen.generatedClassName(variant, encoding);
     if (emitted.add(qualified)) {
-      result.add(new GeneratedSource(qualified, variant.genCode()));
+      result.add(new GeneratedSource(qualified, ProjectionCodegen.genCode(variant, encoding)));
     }
   }
 

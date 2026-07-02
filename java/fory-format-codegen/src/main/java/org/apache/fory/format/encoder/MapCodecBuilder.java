@@ -112,6 +112,7 @@ public class MapCodecBuilder<M extends Map<?, ?>> extends BaseCodecBuilder<MapCo
     LongMap<BinaryMapEncoder.ProjectionSource> projectionSources = new LongMap<>();
     for (ProjectionVariant.MapVariant variant :
         ProjectionVariants.forMap(mapType, keyType, valType, valClass, keyClass, codecFormat)) {
+      ProjectionCodegen.materializeNested(variant, codecFormat);
       projectionSources.put(variant.hash(), new ProjectionSource(variant));
     }
     final var currentFactory = generatedMapEncoder();
