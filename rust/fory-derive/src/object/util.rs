@@ -948,6 +948,7 @@ pub(crate) fn all_type_params_send_sync(generics: &syn::Generics) -> bool {
 pub(crate) fn type_is_send_sync(ty: &Type, send_sync_params: &HashSet<String>) -> bool {
     match ty {
         Type::Array(array) => type_is_send_sync(array.elem.as_ref(), send_sync_params),
+        Type::Slice(slice) => type_is_send_sync(slice.elem.as_ref(), send_sync_params),
         Type::Tuple(tuple) => tuple
             .elems
             .iter()
@@ -1062,12 +1063,10 @@ fn trait_bound_ident(bound: &syn::TypeParamBound) -> Option<String> {
 }
 
 // The typed-ADT forward-compatibility carrier is selected by a runtime marker,
-// not by a schema case id. Known schema cases may still use id 0.
+// not by its name or a schema case id. Generated names may avoid schema cases,
+// and known schema cases may still use id 0.
 pub(crate) fn is_runtime_unknown_variant(variant: &syn::Variant) -> bool {
     if !has_fory_unknown_attr(variant) {
-        return false;
-    }
-    if variant.ident != "Unknown" {
         return false;
     }
     let Fields::Unnamed(fields) = &variant.fields else {

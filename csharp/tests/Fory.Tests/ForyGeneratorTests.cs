@@ -90,7 +90,7 @@ public sealed class ForyGeneratorTests
 
         Assert.Contains("__ForyMatchesTypeMetaHash", generated, StringComparison.Ordinal);
         Assert.Contains(
-            "bool matched = typeMeta.HeaderHash == __ForyRefTypeMetaHash;",
+            "return typeMeta.HeaderHash == (trackRef ? cache.RefHash : cache.NoRefHash);",
             generated,
             StringComparison.Ordinal);
         Assert.DoesNotContain("__ForyMatchesCachedTypeMeta", generated, StringComparison.Ordinal);
@@ -201,7 +201,7 @@ public sealed class ForyGeneratorTests
             generatorDiagnostics.Concat(diagnostics),
             diagnostic =>
                 diagnostic.Id == "FORY006" &&
-                diagnostic.GetMessage().Contains("at least one non-Unknown case", StringComparison.Ordinal));
+            diagnostic.GetMessage().Contains("at least one schema-defined case", StringComparison.Ordinal));
         Assert.DoesNotContain(output.GetDiagnostics(), diagnostic => diagnostic.Severity == DiagnosticSeverity.Error && diagnostic.Id != "FORY006");
     }
 
@@ -803,7 +803,7 @@ public sealed class ForyGeneratorTests
             generated,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
-            "__ForyTypeMetaCacheLock",
+            "__ForyTypeMetaCacheEntry",
             generated,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
