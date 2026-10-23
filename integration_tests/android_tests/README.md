@@ -11,9 +11,9 @@ exact target-Mixin behavior. Mixin coverage registers the source at runtime
 after R8 minification so broad application keep rules cannot hide missing
 processor output.
 
-The tests consume `org.apache.fory:fory-core:1.8.0-SNAPSHOT`,
-`org.apache.fory:fory-json:1.8.0-SNAPSHOT`,
-`org.apache.fory:fory-annotation-processor:1.8.0-SNAPSHOT`,
+The tests consume `org.apache.fory:fory-core:1.8.0-WS-4`,
+`org.apache.fory:fory-json:1.8.0-WS-4`,
+`org.apache.fory:fory-annotation-processor:1.8.0-WS-4`,
 `org.apache.fory:fory-json-kotlin:1.8.0-SNAPSHOT`,
 `org.apache.fory:fory-json-kotlin-ksp:1.8.0-SNAPSHOT`, and the shared Kotlin JSON
 corpus from the local Maven repository. From the repository root, install the
